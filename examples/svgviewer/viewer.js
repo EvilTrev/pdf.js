@@ -1,62 +1,54 @@
 'use strict';
 
+var DEFAULT_SCALE = 1.5;
+
 // Parse query string to extract some parameters (it can fail for some input)
 var query = document.location.href.replace(/^[^?]*(\?([^#]*))?(#.*)?/, '$2');
 var queryParams = query ? JSON.parse('{' + query.split('&').map(function (a) {
   return a.split('=').map(decodeURIComponent).map(JSON.stringify).join(': ');
 }).join(',') + '}') : {};
 
-var url = queryParams.file || '../../test/pdfs/liveprogramming.pdf';
-var scale = +queryParams.scale || 1.5;
+var url = queryParams.file || '../../web/compressed.tracemonkey-pldi-09.pdf';
 
-function renderDocument(pdf) {
-  var numPages = pdf.numPages;
-  // Using promise to fetch the page
-
-  // For testing only.
-  var MAX_NUM_PAGES = 50;
-  var ii = Math.min(MAX_NUM_PAGES, numPages);
-
+function renderDocument(pdf, svgLib) {
   var promise = Promise.resolve();
-  for (var i = 1; i <= ii; i++) {
-    var anchor = document.createElement('a');
-    anchor.setAttribute('name', 'page=' + i);
-    anchor.setAttribute('title', 'Page ' + i);
-    document.body.appendChild(anchor);
-
+  for (var i = 1; i <= pdf.numPages; i++) {
     // Using promise to fetch and render the next page
-    promise = promise.then(function (pageNum, anchor) {
+    promise = promise.then(function (pageNum) {
       return pdf.getPage(pageNum).then(function (page) {
-        var viewport = page.getViewport(scale);
+        var viewport = page.getViewport(DEFAULT_SCALE);
 
         var container = document.createElement('div');
         container.id = 'pageContainer' + pageNum;
         container.className = 'pageContainer';
         container.style.width = viewport.width + 'px';
         container.style.height = viewport.height + 'px';
-        anchor.appendChild(container);
+        document.body.appendChild(container);
 
         return page.getOperatorList().then(function (opList) {
-          var svgGfx = new PDFJS.SVGGraphics(page.commonObjs, page.objs);
+          var svgGfx = new svgLib.SVGGraphics(page.commonObjs, page.objs);
           return svgGfx.getSVG(opList, viewport).then(function (svg) {
             container.appendChild(svg);
           });
         });
       });
-    }.bind(null, i, anchor));
+    }.bind(null, i));
   }
 }
 
 // In production, the bundled pdf.js shall be used instead of RequireJS.
 require.config({paths: {'pdfjs': '../../src'}});
-require(['pdfjs/display/api', 'pdfjs/display/svg'], function (api, svg) {
+require(['pdfjs/display/api', 'pdfjs/display/svg', 'pdfjs/display/global'],
+    function (api, svg, global) {
   // In production, change this to point to the built `pdf.worker.js` file.
-  PDFJS.workerSrc = '../../src/worker_loader.js';
+  global.PDFJS.workerSrc = '../../src/worker_loader.js';
 
   // In production, change this to point to where the cMaps are placed.
-  PDFJS.cMapUrl = '../../external/bcmaps/';
-  PDFJS.cMapPacked = true;
+  global.PDFJS.cMapUrl = '../../external/bcmaps/';
+  global.PDFJS.cMapPacked = true;
 
   // Fetch the PDF document from the URL using promises.
-  api.getDocument(url).then(renderDocument);
+  api.getDocument(url).then(function (doc) {
+    renderDocument(doc, svg);
+  });
 });

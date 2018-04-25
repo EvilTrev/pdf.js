@@ -12,11 +12,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals PDFJS */
 
 'use strict';
 
-//#if (GENERIC || SINGLE_FILE)
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
     define('pdfjs/display/svg', ['exports', 'pdfjs/shared/util'], factory);
@@ -26,7 +24,8 @@
     factory((root.pdfjsDisplaySVG = {}), root.pdfjsSharedUtil);
   }
 }(this, function (exports, sharedUtil) {
-
+if (typeof PDFJSDev === 'undefined' ||
+    PDFJSDev.test('GENERIC || SINGLE_FILE')) {
 var FONT_IDENTITY_MATRIX = sharedUtil.FONT_IDENTITY_MATRIX;
 var IDENTITY_MATRIX = sharedUtil.IDENTITY_MATRIX;
 var ImageKind = sharedUtil.ImageKind;
@@ -35,6 +34,7 @@ var Util = sharedUtil.Util;
 var isNum = sharedUtil.isNum;
 var isArray = sharedUtil.isArray;
 var warn = sharedUtil.warn;
+var createObjectURL = sharedUtil.createObjectURL;
 
 var SVG_DEFAULTS = {
   fontStyle: 'normal',
@@ -108,7 +108,7 @@ var convertImgDataToPng = (function convertImgDataToPngClosure() {
     return (b << 16) | a;
   }
 
-  function encode(imgData, kind) {
+  function encode(imgData, kind, forceDataSchema) {
     var width = imgData.width;
     var height = imgData.height;
     var bitDepth, colorType, lineSize;
@@ -224,13 +224,13 @@ var convertImgDataToPng = (function convertImgDataToPngClosure() {
     offset += CHUNK_WRAPPER_SIZE + idat.length;
     writePngChunk('IEND', new Uint8Array(0), data, offset);
 
-    return PDFJS.createObjectURL(data, 'image/png');
+    return createObjectURL(data, 'image/png', forceDataSchema);
   }
 
-  return function convertImgDataToPng(imgData) {
+  return function convertImgDataToPng(imgData, forceDataSchema) {
     var kind = (imgData.kind === undefined ?
                 ImageKind.GRAYSCALE_1BPP : imgData.kind);
-    return encode(imgData, kind);
+    return encode(imgData, kind, forceDataSchema);
   };
 })();
 
@@ -275,8 +275,8 @@ var SVGExtraState = (function SVGExtraStateClosure() {
     this.dependencies = [];
 
     // Clipping
-    this.clipId = '';
-    this.pendingClip = false;
+    this.activeClipUrl = null;
+    this.clipGroup = null;
 
     this.maskId = '';
   }
@@ -294,16 +294,6 @@ var SVGExtraState = (function SVGExtraStateClosure() {
 })();
 
 var SVGGraphics = (function SVGGraphicsClosure() {
-  function createScratchSVG(width, height) {
-    var NS = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(NS, 'svg:svg');
-    svg.setAttributeNS(null, 'version', '1.1');
-    svg.setAttributeNS(null, 'width', width + 'px');
-    svg.setAttributeNS(null, 'height', height + 'px');
-    svg.setAttributeNS(null, 'viewBox', '0 0 ' + width + ' ' + height);
-    return svg;
-  }
-
   function opListToTree(opList) {
     var opTree = [];
     var tmp = [];
@@ -317,7 +307,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
         continue;
       }
 
-      if(opList[x].fn === 'restore') {
+      if (opList[x].fn === 'restore') {
         opTree = tmp.pop();
       } else {
         opTree.push(opList[x]);
@@ -375,7 +365,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       pf(m[3]) + ' ' + pf(m[4]) + ' ' + pf(m[5]) + ')';
   }
 
-  function SVGGraphics(commonObjs, objs) {
+  function SVGGraphics(commonObjs, objs, forceDataSchema) {
     this.current = new SVGExtraState();
     this.transformMatrix = IDENTITY_MATRIX; // Graphics state matrix
     this.transformStack = [];
@@ -387,6 +377,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
     this.embedFonts = false;
     this.embeddedFonts = Object.create(null);
     this.cssStyle = null;
+    this.forceDataSchema = !!forceDataSchema;
   }
 
   var NS = 'http://www.w3.org/2000/svg';
@@ -409,9 +400,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       this.transformMatrix = this.transformStack.pop();
       this.current = this.extraStack.pop();
 
-      this.tgrp = document.createElementNS(NS, 'svg:g');
-      this.tgrp.setAttributeNS(null, 'transform', pm(this.transformMatrix));
-      this.pgrp.appendChild(this.tgrp);
+      this.tgrp = null;
     },
 
     group: function SVGGraphics_group(items) {
@@ -451,30 +440,20 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
     transform: function SVGGraphics_transform(a, b, c, d, e, f) {
       var transformMatrix = [a, b, c, d, e, f];
-      this.transformMatrix = PDFJS.Util.transform(this.transformMatrix,
-                                                  transformMatrix);
-
-      this.tgrp = document.createElementNS(NS, 'svg:g');
-      this.tgrp.setAttributeNS(null, 'transform', pm(this.transformMatrix));
+      this.transformMatrix = Util.transform(this.transformMatrix,
+                                            transformMatrix);
+      this.tgrp = null;
     },
 
     getSVG: function SVGGraphics_getSVG(operatorList, viewport) {
-      this.svg = createScratchSVG(viewport.width, viewport.height);
       this.viewport = viewport;
 
+      var svgElement = this._initialize(viewport);
       return this.loadDependencies(operatorList).then(function () {
         this.transformMatrix = IDENTITY_MATRIX;
-        this.pgrp = document.createElementNS(NS, 'svg:g'); // Parent group
-        this.pgrp.setAttributeNS(null, 'transform', pm(viewport.transform));
-        this.tgrp = document.createElementNS(NS, 'svg:g'); // Transform group
-        this.tgrp.setAttributeNS(null, 'transform', pm(this.transformMatrix));
-        this.defs = document.createElementNS(NS, 'svg:defs');
-        this.pgrp.appendChild(this.defs);
-        this.pgrp.appendChild(this.tgrp);
-        this.svg.appendChild(this.pgrp);
         var opTree = this.convertOpList(operatorList);
         this.executeOpTree(opTree);
-        return this.svg;
+        return svgElement;
       }.bind(this));
     },
 
@@ -491,14 +470,14 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
       for (var x = 0; x < fnArrayLen; x++) {
         var fnId = fnArray[x];
-        opList.push({'fnId' : fnId, 'fn': REVOPS[fnId], 'args': argsArray[x]});
+        opList.push({'fnId': fnId, 'fn': REVOPS[fnId], 'args': argsArray[x]});
       }
       return opListToTree(opList);
     },
 
     executeOpTree: function SVGGraphics_executeOpTree(opTree) {
       var opTreeLen = opTree.length;
-      for(var x = 0; x < opTreeLen; x++) {
+      for (var x = 0; x < opTreeLen; x++) {
         var fn = opTree[x].fn;
         var fnId = opTree[x].fnId;
         var args = opTree[x].args;
@@ -633,7 +612,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
             this.group(opTree[x].items);
             break;
           default:
-            warn('Unimplemented method '+ fn);
+            warn('Unimplemented operator ' + fn);
             break;
         }
       }
@@ -754,13 +733,12 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
       current.txtElement.setAttributeNS(null, 'transform',
                                         pm(current.textMatrix) +
-                                        ' scale(1, -1)' );
+                                        ' scale(1, -1)');
       current.txtElement.setAttributeNS(XML_NS, 'xml:space', 'preserve');
       current.txtElement.appendChild(current.tspan);
       current.txtgrp.appendChild(current.txtElement);
 
-      this.tgrp.appendChild(current.txtElement);
-
+      this._ensureTransformGroup().appendChild(current.txtElement);
     },
 
     setLeadingMoveText: function SVGGraphics_setLeadingMoveText(x, y) {
@@ -775,7 +753,8 @@ var SVGGraphics = (function SVGGraphicsClosure() {
         this.defs.appendChild(this.cssStyle);
       }
 
-      var url = PDFJS.createObjectURL(fontObj.data, fontObj.mimetype);
+      var url = createObjectURL(fontObj.data, fontObj.mimetype,
+                                this.forceDataSchema);
       this.cssStyle.textContent +=
         '@font-face { font-family: "' + fontObj.loadedName + '";' +
         ' src: url(' + url + '); }\n';
@@ -816,16 +795,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       current.xcoords = [];
     },
 
-    endText: function SVGGraphics_endText() {
-      if (this.current.pendingClip) {
-        this.cgrp.appendChild(this.tgrp);
-        this.pgrp.appendChild(this.cgrp);
-      } else {
-        this.pgrp.appendChild(this.tgrp);
-      }
-      this.tgrp = document.createElementNS(NS, 'svg:g');
-      this.tgrp.setAttributeNS(null, 'transform', pm(this.transformMatrix));
-    },
+    endText: function SVGGraphics_endText() {},
 
     // Path properties
     setLineWidth: function SVGGraphics_setLineWidth(width) {
@@ -923,54 +893,44 @@ var SVGGraphics = (function SVGGraphicsClosure() {
                                   pf(current.dashPhase) + 'px');
       current.path.setAttributeNS(null, 'fill', 'none');
 
-      this.tgrp.appendChild(current.path);
-      if (current.pendingClip) {
-        this.cgrp.appendChild(this.tgrp);
-        this.pgrp.appendChild(this.cgrp);
-      } else {
-        this.pgrp.appendChild(this.tgrp);
-      }
+      this._ensureTransformGroup().appendChild(current.path);
+
       // Saving a reference in current.element so that it can be addressed
       // in 'fill' and 'stroke'
       current.element = current.path;
       current.setCurrentPoint(x, y);
     },
 
-    endPath: function SVGGraphics_endPath() {
-      var current = this.current;
-      if (current.pendingClip) {
-        this.cgrp.appendChild(this.tgrp);
-        this.pgrp.appendChild(this.cgrp);
-      } else {
-        this.pgrp.appendChild(this.tgrp);
-      }
-      this.tgrp = document.createElementNS(NS, 'svg:g');
-      this.tgrp.setAttributeNS(null, 'transform', pm(this.transformMatrix));
-    },
+    endPath: function SVGGraphics_endPath() {},
 
     clip: function SVGGraphics_clip(type) {
       var current = this.current;
       // Add current path to clipping path
-      current.clipId = 'clippath' + clipCount;
+      var clipId = 'clippath' + clipCount;
       clipCount++;
-      this.clippath = document.createElementNS(NS, 'svg:clipPath');
-      this.clippath.setAttributeNS(null, 'id', current.clipId);
+      var clipPath = document.createElementNS(NS, 'svg:clipPath');
+      clipPath.setAttributeNS(null, 'id', clipId);
+      clipPath.setAttributeNS(null, 'transform', pm(this.transformMatrix));
       var clipElement = current.element.cloneNode();
       if (type === 'evenodd') {
         clipElement.setAttributeNS(null, 'clip-rule', 'evenodd');
       } else {
         clipElement.setAttributeNS(null, 'clip-rule', 'nonzero');
       }
-      this.clippath.setAttributeNS(null, 'transform', pm(this.transformMatrix));
-      this.clippath.appendChild(clipElement);
-      this.defs.appendChild(this.clippath);
+      clipPath.appendChild(clipElement);
+      this.defs.appendChild(clipPath);
 
-      // Create a new group with that attribute
-      current.pendingClip = true;
-      this.cgrp = document.createElementNS(NS, 'svg:g');
-      this.cgrp.setAttributeNS(null, 'clip-path',
-                               'url(#' + current.clipId + ')');
-      this.pgrp.appendChild(this.cgrp);
+      if (current.activeClipUrl) {
+        // The previous clipping group content can go out of order -- resetting
+        // cached clipGroup's.
+        current.clipGroup = null;
+        this.extraStack.forEach(function (prev) {
+          prev.clipGroup = null;
+        });
+      }
+      current.activeClipUrl = 'url(#' + clipId + ')';
+
+      this.tgrp = null;
     },
 
     closePath: function SVGGraphics_closePath() {
@@ -1014,20 +974,11 @@ var SVGGraphics = (function SVGGraphicsClosure() {
           case 'D':
             this.setDash(value[0], value[1]);
             break;
-          case 'RI':
-            break;
-          case 'FL':
-            break;
           case 'Font':
             this.setFont(value);
             break;
-          case 'CA':
-            break;
-          case 'ca':
-            break;
-          case 'BM':
-            break;
-          case 'SMask':
+          default:
+            warn('Unimplemented graphic state ' + key);
             break;
         }
       }
@@ -1081,11 +1032,11 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       rect.setAttributeNS(null, 'width', '1px');
       rect.setAttributeNS(null, 'height', '1px');
       rect.setAttributeNS(null, 'fill', current.fillColor);
-      this.tgrp.appendChild(rect);
+
+      this._ensureTransformGroup().appendChild(rect);
     },
 
     paintJpegXObject: function SVGGraphics_paintJpegXObject(objId, w, h) {
-      var current = this.current;
       var imgObj = this.objs.get(objId);
       var imgEl = document.createElementNS(NS, 'svg:image');
       imgEl.setAttributeNS(XLINK_NS, 'xlink:href', imgObj.src);
@@ -1096,13 +1047,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       imgEl.setAttributeNS(null, 'transform',
                            'scale(' + pf(1 / w) + ' ' + pf(-1 / h) + ')');
 
-      this.tgrp.appendChild(imgEl);
-      if (current.pendingClip) {
-        this.cgrp.appendChild(this.tgrp);
-        this.pgrp.appendChild(this.cgrp);
-      } else {
-        this.pgrp.appendChild(this.tgrp);
-      }
+      this._ensureTransformGroup().appendChild(imgEl);
     },
 
     paintImageXObject: function SVGGraphics_paintImageXObject(objId) {
@@ -1116,17 +1061,16 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
     paintInlineImageXObject:
         function SVGGraphics_paintInlineImageXObject(imgData, mask) {
-      var current = this.current;
       var width = imgData.width;
       var height = imgData.height;
 
-      var imgSrc = convertImgDataToPng(imgData);
+      var imgSrc = convertImgDataToPng(imgData, this.forceDataSchema);
       var cliprect = document.createElementNS(NS, 'svg:rect');
       cliprect.setAttributeNS(null, 'x', '0');
       cliprect.setAttributeNS(null, 'y', '0');
       cliprect.setAttributeNS(null, 'width', pf(width));
       cliprect.setAttributeNS(null, 'height', pf(height));
-      current.element = cliprect;
+      this.current.element = cliprect;
       this.clip('nonzero');
       var imgEl = document.createElementNS(NS, 'svg:image');
       imgEl.setAttributeNS(XLINK_NS, 'xlink:href', imgSrc);
@@ -1140,13 +1084,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       if (mask) {
         mask.appendChild(imgEl);
       } else {
-        this.tgrp.appendChild(imgEl);
-      }
-      if (current.pendingClip) {
-        this.cgrp.appendChild(this.tgrp);
-        this.pgrp.appendChild(this.cgrp);
-      } else {
-        this.pgrp.appendChild(this.tgrp);
+        this._ensureTransformGroup().appendChild(imgEl);
       }
     },
 
@@ -1167,17 +1105,16 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       rect.setAttributeNS(null, 'width', pf(width));
       rect.setAttributeNS(null, 'height', pf(height));
       rect.setAttributeNS(null, 'fill', fillColor);
-      rect.setAttributeNS(null, 'mask', 'url(#' + current.maskId +')');
+      rect.setAttributeNS(null, 'mask', 'url(#' + current.maskId + ')');
       this.defs.appendChild(mask);
-      this.tgrp.appendChild(rect);
+
+      this._ensureTransformGroup().appendChild(rect);
 
       this.paintInlineImageXObject(imgData, mask);
     },
 
     paintFormXObjectBegin:
         function SVGGraphics_paintFormXObjectBegin(matrix, bbox) {
-      this.save();
-
       if (isArray(matrix) && matrix.length === 6) {
         this.transform(matrix[0], matrix[1], matrix[2],
                        matrix[3], matrix[4], matrix[5]);
@@ -1199,15 +1136,73 @@ var SVGGraphics = (function SVGGraphicsClosure() {
     },
 
     paintFormXObjectEnd:
-        function SVGGraphics_paintFormXObjectEnd() {
-      this.restore();
+        function SVGGraphics_paintFormXObjectEnd() {},
+
+    /**
+     * @private
+     */
+    _initialize: function SVGGraphics_initialize(viewport) {
+      // Create the SVG element.
+      var svg = document.createElementNS(NS, 'svg:svg');
+      svg.setAttributeNS(null, 'version', '1.1');
+      svg.setAttributeNS(null, 'width', viewport.width + 'px');
+      svg.setAttributeNS(null, 'height', viewport.height + 'px');
+      svg.setAttributeNS(null, 'preserveAspectRatio', 'none');
+      svg.setAttributeNS(null, 'viewBox', '0 0 ' + viewport.width +
+                                          ' ' + viewport.height);
+
+      // Create the definitions element.
+      var definitions = document.createElementNS(NS, 'svg:defs');
+      svg.appendChild(definitions);
+      this.defs = definitions;
+
+      // Create the root group element, which acts a container for all other
+      // groups and applies the viewport transform.
+      var rootGroup = document.createElementNS(NS, 'svg:g');
+      rootGroup.setAttributeNS(null, 'transform', pm(viewport.transform));
+      svg.appendChild(rootGroup);
+
+      // For the construction of the SVG image we are only interested in the
+      // root group, so we expose it as the entry point of the SVG image for
+      // the other code in this class.
+      this.svg = rootGroup;
+
+      return svg;
+    },
+
+    /**
+     * @private
+     */
+    _ensureClipGroup: function SVGGraphics_ensureClipGroup() {
+      if (!this.current.clipGroup) {
+        var clipGroup = document.createElementNS(NS, 'svg:g');
+        clipGroup.setAttributeNS(null, 'clip-path',
+                                 this.current.activeClipUrl);
+        this.svg.appendChild(clipGroup);
+        this.current.clipGroup = clipGroup;
+      }
+      return this.current.clipGroup;
+    },
+
+    /**
+     * @private
+     */
+    _ensureTransformGroup: function SVGGraphics_ensureTransformGroup() {
+      if (!this.tgrp) {
+        this.tgrp = document.createElementNS(NS, 'svg:g');
+        this.tgrp.setAttributeNS(null, 'transform', pm(this.transformMatrix));
+        if (this.current.activeClipUrl) {
+          this._ensureClipGroup().appendChild(this.tgrp);
+        } else {
+          this.svg.appendChild(this.tgrp);
+        }
+      }
+      return this.tgrp;
     }
   };
   return SVGGraphics;
 })();
 
-PDFJS.SVGGraphics = SVGGraphics;
-
 exports.SVGGraphics = SVGGraphics;
+}
 }));
-//#endif

@@ -13,10 +13,33 @@
  * limitations under the License.
  */
 
-/* globals chrome, PDFJS, PDFViewerApplication, OverlayManager */
+/* globals chrome, DEFAULT_URL */
 'use strict';
 
-var ChromeCom = (function ChromeComClosure() {
+(function (root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('pdfjs-web/chromecom', ['exports', 'pdfjs-web/app',
+      'pdfjs-web/overlay_manager', 'pdfjs-web/preferences', 'pdfjs-web/pdfjs'],
+      factory);
+  } else if (typeof exports !== 'undefined') {
+    factory(exports, require('./app.js'), require('./overlay_manager.js'),
+      require('./preferences.js'), require('./pdfjs.js'));
+  } else {
+    factory((root.pdfjsWebChromeCom = {}), root.pdfjsWebApp,
+      root.pdfjsWebOverlayManager, root.pdfjsWebPreferences,
+      root.pdfjsWebPDFJS);
+  }
+}(this, function (exports, app, overlayManager, preferences, pdfjsLib) {
+  if (typeof PDFJSDev === 'undefined' || !PDFJSDev.test('CHROME')) {
+    throw new Error('Module "pdfjs-web/chromecom" shall not be used outside ' +
+                    'CHROME build.');
+  }
+
+  var PDFViewerApplication = app.PDFViewerApplication;
+  var DefaultExernalServices = app.DefaultExernalServices;
+  var OverlayManager = overlayManager.OverlayManager;
+  var Preferences = preferences.Preferences;
+
   var ChromeCom = {};
   /**
    * Creates an event that the extension is listening for and will
@@ -46,97 +69,69 @@ var ChromeCom = (function ChromeComClosure() {
   };
 
   /**
-   * Opens a PDF file with the PDF viewer.
+   * Resolves a PDF file path and attempts to detects length.
    *
    * @param {String} file Absolute URL of PDF file.
+   * @param {Function} callback A callback with resolved URL and file length.
    */
-  ChromeCom.openPDFFile = function ChromeCom_openPDFFile(file) {
+  ChromeCom.resolvePDFFile = function ChromeCom_resolvePDFFile(file, callback) {
     // Expand drive:-URLs to filesystem URLs (Chrome OS)
     file = file.replace(/^drive:/i,
         'filesystem:' + location.origin + '/external/');
 
-    ChromeCom.request('getPDFStream', file, function(response) {
-      if (response) {
-        // We will only get a response when the streamsPrivate API is available.
-
-        var isFTPFile = /^ftp:/i.test(file);
-        var streamUrl = response.streamUrl;
-        if (streamUrl) {
-          console.log('Found data stream for ' + file);
-          PDFViewerApplication.open(streamUrl, {
-            length: response.contentLength
-          });
-          PDFViewerApplication.setTitleUsingUrl(file);
+    if (/^filesystem:/.test(file) && !pdfjsLib.PDFJS.disableWorker) {
+      // The security origin of filesystem:-URLs are not preserved when the
+      // URL is passed to a Web worker, (http://crbug.com/362061), so we have
+      // to create an intermediate blob:-URL as a work-around.
+      var resolveLocalFileSystemURL = window.resolveLocalFileSystemURL ||
+                                      window.webkitResolveLocalFileSystemURL;
+      resolveLocalFileSystemURL(file, function onResolvedFSURL(fileEntry) {
+        fileEntry.file(function(fileObject) {
+          var blobUrl = URL.createObjectURL(fileObject);
+          callback(blobUrl, fileObject.size);
+        });
+      }, function onFileSystemError(error) {
+        // This should not happen. When it happens, just fall back to the
+        // usual way of getting the File's data (via the Web worker).
+        console.warn('Cannot resolve file ' + file + ', ' + error.name + ' ' +
+                     error.message);
+        callback(file);
+      });
+      return;
+    }
+    if (/^https?:/.test(file)) {
+      // Assumption: The file being opened is the file that was requested.
+      // There is no UI to input a different URL, so this assumption will hold
+      // for now.
+      setReferer(file, function() {
+        callback(file);
+      });
+      return;
+    }
+    if (/^file?:/.test(file)) {
+      getEmbedderOrigin(function(origin) {
+        // If the origin cannot be determined, let Chrome decide whether to
+        // allow embedding files. Otherwise, only allow local files to be
+        // embedded from local files or Chrome extensions.
+        // Even without this check, the file load in frames is still blocked,
+        // but this may change in the future (https://crbug.com/550151).
+        if (origin && !/^file:|^chrome-extension:/.test(origin)) {
+          PDFViewerApplication.error('Blocked ' + origin + ' from loading ' +
+              file + '. Refused to load a local file in a non-local page ' +
+              'for security reasons.');
           return;
         }
-        if (isFTPFile && !response.extensionSupportsFTP) {
-          // Stream not found, and it's loaded from FTP.
-          // When the browser does not support loading ftp resources over
-          // XMLHttpRequest, just reload the page.
-          // NOTE: This will not lead to an infinite redirect loop, because
-          // if the file exists, then the streamsPrivate API will capture the
-          // stream and send back the response. If the stream does not exist,
-          // a "Webpage not available" error will be shown (not the PDF Viewer).
-          location.replace(file);
-          return;
-        }
-      }
-      if (/^filesystem:/.test(file) && !PDFJS.disableWorker) {
-        // The security origin of filesystem:-URLs are not preserved when the
-        // URL is passed to a Web worker, (http://crbug.com/362061), so we have
-        // to create an intermediate blob:-URL as a work-around.
-        var resolveLocalFileSystemURL = window.resolveLocalFileSystemURL ||
-                                        window.webkitResolveLocalFileSystemURL;
-        resolveLocalFileSystemURL(file, function onResolvedFSURL(fileEntry) {
-          fileEntry.file(function(fileObject) {
-            var blobUrl = URL.createObjectURL(fileObject);
-            PDFViewerApplication.open(blobUrl, {
-              length: fileObject.size
-            });
-          });
-        }, function onFileSystemError(error) {
-          // This should not happen. When it happens, just fall back to the
-          // usual way of getting the File's data (via the Web worker).
-          console.warn('Cannot resolve file ' + file + ', ' + error.name + ' ' +
-                       error.message);
-          PDFViewerApplication.open(file);
-        });
-        return;
-      }
-      if (/^https?:/.test(file)) {
-        // Assumption: The file being opened is the file that was requested.
-        // There is no UI to input a different URL, so this assumption will hold
-        // for now.
-        setReferer(file, function() {
-          PDFViewerApplication.open(file);
-        });
-        return;
-      }
-      if (/^file?:/.test(file)) {
-        getEmbedderOrigin(function(origin) {
-          // If the origin cannot be determined, let Chrome decide whether to
-          // allow embedding files. Otherwise, only allow local files to be
-          // embedded from local files or Chrome extensions.
-          // Even without this check, the file load in frames is still blocked,
-          // but this may change in the future (https://crbug.com/550151).
-          if (origin && !/^file:|^chrome-extension:/.test(origin)) {
-            PDFViewerApplication.error('Blocked ' + origin + ' from loading ' +
-                file + '. Refused to load a local file in a non-local page ' +
-                'for security reasons.');
-            return;
+        isAllowedFileSchemeAccess(function(isAllowedAccess) {
+          if (isAllowedAccess) {
+            callback(file);
+          } else {
+            requestAccessToLocalFile(file);
           }
-          isAllowedFileSchemeAccess(function(isAllowedAccess) {
-            if (isAllowedAccess) {
-              PDFViewerApplication.open(file);
-            } else {
-              requestAccessToLocalFile(file);
-            }
-          });
         });
-        return;
-      }
-      PDFViewerApplication.open(file);
-    });
+      });
+      return;
+    }
+    callback(file);
   };
 
   function getEmbedderOrigin(callback) {
@@ -194,7 +189,9 @@ var ChromeCom = (function ChromeComClosure() {
     }
     if (!chromeFileAccessOverlayPromise) {
       chromeFileAccessOverlayPromise = OverlayManager.register(
-          'chromeFileAccessOverlay', onCloseOverlay, true);
+        'chromeFileAccessOverlay',
+        document.getElementById('chromeFileAccessOverlay'),
+        onCloseOverlay, true);
     }
     chromeFileAccessOverlayPromise.then(function() {
       var iconPath = chrome.runtime.getManifest().icons[48];
@@ -205,7 +202,7 @@ var ChromeCom = (function ChromeComClosure() {
       // because the shown string should match the UI at chrome://extensions.
       // These strings are from chrome/app/resources/generated_resources_*.xtb.
       var i18nFileAccessLabel =
-//#include chrome-i18n-allow-access-to-file-urls.json
+        PDFJSDev.json('$ROOT/web/chrome-i18n-allow-access-to-file-urls.json')
         [chrome.i18n.getUILanguage && chrome.i18n.getUILanguage()];
 
       if (i18nFileAccessLabel) {
@@ -285,7 +282,7 @@ var ChromeCom = (function ChromeComClosure() {
         // the PDF file. When the viewer is reloaded or when the user navigates
         // back and forward, the background page will not observe a HTTP request
         // with Referer. To make sure that the Referer is preserved, store it in
-        // history.state, which is preserved accross reloads/navigations.
+        // history.state, which is preserved across reloads/navigations.
         var state = window.history.state || {};
         state.chromecomState = referer;
         window.history.replaceState(state, '');
@@ -304,5 +301,59 @@ var ChromeCom = (function ChromeComClosure() {
     }
   }
 
-  return ChromeCom;
-})();
+  // chrome.storage.sync is not supported in every Chromium-derivate.
+  // Note: The background page takes care of migrating values from
+  // chrome.storage.local to chrome.storage.sync when needed.
+  var storageArea = chrome.storage.sync || chrome.storage.local;
+
+  Preferences._writeToStorage = function (prefObj) {
+    return new Promise(function (resolve) {
+      if (prefObj === Preferences.defaults) {
+        var keysToRemove = Object.keys(Preferences.defaults);
+        // If the storage is reset, remove the keys so that the values from
+        // managed storage are applied again.
+        storageArea.remove(keysToRemove, function() {
+          resolve();
+        });
+      } else {
+        storageArea.set(prefObj, function() {
+          resolve();
+        });
+      }
+    });
+  };
+
+  Preferences._readFromStorage = function (prefObj) {
+    return new Promise(function (resolve) {
+      if (chrome.storage.managed) {
+        // Get preferences as set by the system administrator.
+        // See extensions/chromium/preferences_schema.json for more information.
+        // These preferences can be overridden by the user.
+        chrome.storage.managed.get(Preferences.defaults, getPreferences);
+      } else {
+        // Managed storage not supported, e.g. in old Chromium versions.
+        getPreferences(Preferences.defaults);
+      }
+
+      function getPreferences(defaultPrefs) {
+        if (chrome.runtime.lastError) {
+          // Managed storage not supported, e.g. in Opera.
+          defaultPrefs = Preferences.defaults;
+        }
+        storageArea.get(defaultPrefs, function(readPrefs) {
+          resolve(readPrefs);
+        });
+      }
+    });
+  };
+
+  var ChromeExternalServices = Object.create(DefaultExernalServices);
+  ChromeExternalServices.initPassiveLoading = function (callbacks) {
+    ChromeCom.resolvePDFFile(DEFAULT_URL, function (url, length, originalURL) {
+      callbacks.onOpenWithURL(url, length, originalURL);
+    });
+  };
+  PDFViewerApplication.externalServices = ChromeExternalServices;
+
+  exports.ChromeCom = ChromeCom;
+}));

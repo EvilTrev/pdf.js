@@ -66,10 +66,11 @@ function isEOF(v) {
 var MAX_LENGTH_TO_CACHE = 1000;
 
 var Parser = (function ParserClosure() {
-  function Parser(lexer, allowStreams, xref) {
+  function Parser(lexer, allowStreams, xref, recoveryMode) {
     this.lexer = lexer;
     this.allowStreams = allowStreams;
     this.xref = xref;
+    this.recoveryMode = recoveryMode || false;
     this.imageCache = Object.create(null);
     this.refill();
   }
@@ -115,7 +116,10 @@ var Parser = (function ParserClosure() {
               array.push(this.getObj(cipherTransform));
             }
             if (isEOF(this.buf1)) {
-              error('End of file inside array');
+              if (!this.recoveryMode) {
+                error('End of file inside array');
+              }
+              return array;
             }
             this.shift();
             return array;
@@ -136,7 +140,10 @@ var Parser = (function ParserClosure() {
               dict.set(key, this.getObj(cipherTransform));
             }
             if (isEOF(this.buf1)) {
-              error('End of file inside dictionary');
+              if (!this.recoveryMode) {
+                error('End of file inside dictionary');
+              }
+              return dict;
             }
 
             // Stream objects are not allowed inside content streams or
@@ -532,6 +539,9 @@ var Parser = (function ParserClosure() {
       var filter = dict.get('Filter', 'F');
       var params = dict.get('DecodeParms', 'DP');
       if (isName(filter)) {
+        if (isArray(params)) {
+          params = params[0];
+        }
         return this.makeFilter(stream, filter.name, length, params);
       }
 
@@ -557,7 +567,10 @@ var Parser = (function ParserClosure() {
       return stream;
     },
     makeFilter: function Parser_makeFilter(stream, name, maybeLength, params) {
-      if (stream.dict.get('Length') === 0 && !maybeLength) {
+      // Since the 'Length' entry in the stream dictionary can be completely
+      // wrong, e.g. zero for non-empty streams, only skip parsing the stream
+      // when we can be absolutely certain that it actually is empty.
+      if (maybeLength === 0) {
         warn('Empty "' + name + '" stream.');
         return new NullStream(stream);
       }
@@ -589,11 +602,11 @@ var Parser = (function ParserClosure() {
         }
         if (name === 'DCTDecode' || name === 'DCT') {
           xrefStreamStats[StreamType.DCT] = true;
-          return new JpegStream(stream, maybeLength, stream.dict, this.xref);
+          return new JpegStream(stream, maybeLength, stream.dict, params);
         }
         if (name === 'JPXDecode' || name === 'JPX') {
           xrefStreamStats[StreamType.JPX] = true;
-          return new JpxStream(stream, maybeLength, stream.dict);
+          return new JpxStream(stream, maybeLength, stream.dict, params);
         }
         if (name === 'ASCII85Decode' || name === 'A85') {
           xrefStreamStats[StreamType.A85] = true;
@@ -613,7 +626,7 @@ var Parser = (function ParserClosure() {
         }
         if (name === 'JBIG2Decode') {
           xrefStreamStats[StreamType.JBIG] = true;
-          return new Jbig2Stream(stream, maybeLength, stream.dict);
+          return new Jbig2Stream(stream, maybeLength, stream.dict, params);
         }
         warn('filter "' + name + '" not supported yet');
         return stream;
@@ -651,11 +664,6 @@ var Lexer = (function LexerClosure() {
     // other commands or literals as a prefix. The knowCommands is optional.
     this.knownCommands = knownCommands;
   }
-
-  Lexer.isSpace = function Lexer_isSpace(ch) {
-    // Space is one of the following characters: SPACE, TAB, CR or LF.
-    return (ch === 0x20 || ch === 0x09 || ch === 0x0D || ch === 0x0A);
-  };
 
   // A '1' in this array means the character is white space. A '1' or
   // '2' means the character ends a name or command.
@@ -747,7 +755,7 @@ var Lexer = (function LexerClosure() {
         } else if (ch === 0x2D) { // '-'
           // ignore minus signs in the middle of numbers to match
           // Adobe's behavior
-          warn('Badly formated number');
+          warn('Badly formatted number');
         } else if (ch === 0x45 || ch === 0x65) { // 'E', 'e'
           // 'E' can be either a scientific notation or the beginning of a new
           // operator
@@ -1116,7 +1124,4 @@ exports.Lexer = Lexer;
 exports.Linearization = Linearization;
 exports.Parser = Parser;
 exports.isEOF = isEOF;
-
-// TODO refactor to remove dependency on stream.js
-coreStream._setCoreParser(exports);
 }));

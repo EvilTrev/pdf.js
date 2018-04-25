@@ -53,6 +53,22 @@ text elements rendered by closure, and not by the base library.
         $ };
         $ PDFJS.FormFunctionality.setControlRenderClosureByType(myClosure,'TEXT');
 
+Alternately, you may accept the base default rendering of the control element, but instead opt to modify the control
+element after the default control element object has been created, but before it has been inserted into the dom.
+This is called for the pageholder div with params "PAGE","page" and the element, the canvas element
+with params "CANVAS","canvas" and the element, the form element with params "FORM","form" and the element, and
+for each individual input control, with fieldType as one of the FormFunctionality.fieldTypes constants
+(CHECK_BOX, DROP_DOWN, TEXT etc), elementId with fieldData.correctedId which maps to the name of the element
+as well as the id for non-radio buttons and element which is the actual input object.
+
+        $ var myClosure = function (fieldType, elementId, element) {
+        $     if (fieldType!='PAGE' && fieldType!='CANVAS' && fieldType!='FORM') {
+        $         element.style = element.style + '; background-color:orange;';
+        $     }
+        $ };
+        $ PDFJS.FormFunctionality.setPostCreationTweak(myClosure);
+
+
 The basic types are:
 + CHECK_BOX - Check boxes
 + TEXT - All _input_ controls of type text, file and password as well as _textarea_s
@@ -64,7 +80,7 @@ in many scenarios, including scenarios where you wish to alter the basic nature 
 such as turning a text box for Country into a drop down.
 
 Depending on the source element type, the properties that define the element can vary. All
-elements will have the following properties defined. Note that all diplay type values are scales
+elements will have the following properties defined. Note that all diplay type values are scaled
 to the viewport:
 
 + id - The id of the item, coming from the fullName property in the source
@@ -143,6 +159,12 @@ try to scale the actual control, but will center it in the space a scaled contro
 If you wish to scale these controls, create your own control generation function as set it using
 setControlRenderClosureByType().
 
+## Learning
+
+You can see a basic example of how one might start using this library in:
+
++ [examples/forms/](https://github.com/mainegreen/pdf.js/blob/master/examples/forms/)
+
 ## >> END FORMS SPECIFIC README <<
 ## >> BEGIN BASIC PDF.JS README <<
 
@@ -157,7 +179,7 @@ rendering PDFs.
 PDF.js is an open source project and always looking for more contributors. To
 get involved checkout:
 
-+ [Issue Reporting Guide](https://github.com/mozilla/pdf.js/blob/master/CONTRIBUTING.md)
++ [Issue Reporting Guide](https://github.com/mozilla/pdf.js/blob/master/.github/CONTRIBUTING.md)
 + [Code Contribution Guide](https://github.com/mozilla/pdf.js/wiki/Contributing)
 + [Frequently Asked Questions](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions)
 + [Good Beginner Bugs](https://github.com/mozilla/pdf.js/issues?direction=desc&labels=5-good-beginner-bug&page=1&sort=created&state=open)
@@ -171,21 +193,25 @@ irc.mozilla.org.
 
 ### Online demo
 
-+ http://mozilla.github.io/pdf.js/web/viewer.html
++ https://mozilla.github.io/pdf.js/web/viewer.html
 
 ### Browser Extensions
 
-#### Firefox and Seamonkey
+#### Firefox (and Seamonkey)
 
-PDF.js is built into version 19+ of Firefox, however the extension is still available:
+PDF.js is built into version 19+ of Firefox, however one extension is still available:
 
-+ [Development Version](http://mozilla.github.io/pdf.js/extensions/firefox/pdf.js.xpi) - This version is updated every time new code is merged into the PDF.js codebase. This should be quite stable but still might break from time to time. This version is also reported to work when installed as extension in Seamonkey 2.39.
++ [Development Version](http://mozilla.github.io/pdf.js/extensions/firefox/pdf.js.xpi) - This extension is mainly intended for developers/testers, and it is updated every time new code is merged into the PDF.js codebase. It should be quite stable, but might break from time to time.
+
+  + Please note that the extension is *not* guaranteed to be compatible with Firefox versions that are *older* than the current ESR version, see the [Release Calendar](https://wiki.mozilla.org/RapidRelease/Calendar#Past_branch_dates).
+
+  + The extension should also work in Seamonkey, provided that it is based on a Firefox version as above (see [Which version of Firefox does SeaMonkey 2.x correspond with?](https://wiki.mozilla.org/SeaMonkey/FAQ#General)), but we do *not* guarantee compatibility.
 
 #### Chrome
 
 + The official extension for Chrome can be installed from the [Chrome Web Store](https://chrome.google.com/webstore/detail/pdf-viewer/oemmndcbldboiebfnladdacbdfmadadm).
 *This extension is maintained by [@Rob--W](https://github.com/Rob--W).*
-+ Build Your Own - Get the code as explained below and issue `node make chromium`. Then open
++ Build Your Own - Get the code as explained below and issue `gulp chromium`. Then open
 Chrome, go to `Tools > Extension` and load the (unpackaged) extension from the
 directory `build/chromium`.
 
@@ -197,16 +223,19 @@ To get a local copy of the current code, clone it using git:
     $ cd pdf.js
 
 Next, install Node.js via the [official package](http://nodejs.org) or via
-[nvm](https://github.com/creationix/nvm). If everything worked out, run
+[nvm](https://github.com/creationix/nvm). You need to install the gulp package
+globally (see also [gulp's getting started](https://github.com/gulpjs/gulp/blob/master/docs/getting-started.md#getting-started)):
+
+    $ npm install -g gulp-cli
+
+If everything worked out, install all dependencies for PDF.js:
 
     $ npm install
-
-to install all dependencies for PDF.js.
 
 Finally you need to start a local web server as some browsers do not allow opening
 PDF files using a file:// URL. Run
 
-    $ node make server
+    $ gulp server
 
 and then you can open
 
@@ -221,13 +250,20 @@ It is also possible to view all test PDF files on the right side by opening
 In order to bundle all `src/` files into two productions scripts and build the generic
 viewer, issue:
 
-    $ node make generic
+    $ gulp generic
 
 This will generate `pdf.js` and `pdf.worker.js` in the `build/generic/build/` directory.
 Both scripts are needed but only `pdf.js` needs to be included since `pdf.worker.js` will
 be loaded by `pdf.js`. If you want to support more browsers than Firefox you'll also need
 to include `compatibility.js` from `build/generic/web/`. The PDF.js files are large and
 should be minified for production.
+
+## Using PDF.js in a web application
+
+To use PDF.js in a web application you can choose to use a pre-built version of the library
+or to build it from source. We supply pre-built versions for usage with NPM and Bower under
+the `pdfjs-dist` name. For more information and examples please refer to the
+[wiki page](https://github.com/mozilla/pdf.js/wiki/Setup-pdf.js-in-a-website) on this subject.
 
 ## Learning
 

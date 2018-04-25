@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+    <script src="pdf.js"></script>
+    <script src="pdf.worker.js"></script>
+    <script src="forms.js"></script>
+</head>
+<body>
+<div style="display: table; width: 100%;">
+    <div style="display: table-row;">
+        <div style="display: table-cell; width:800px;">
+            <div id="pager" style="font-family: Arial, Arial Unicode MS, helvetica, sans-serif; font-size: 2em;">
+                <a href="#" onclick="FormsDemo.loadPage(1)">|&lt;</a>
+                <a href="#" onclick="FormsDemo.loadPage(FormsDemo.getPreviousPage())">&lt;</a>
+                <a href="#" onclick="FormsDemo.loadPage(1)">1</a>
+                <a href="#" onclick="FormsDemo.loadPage(2)">2</a>
+                <a href="#" onclick="FormsDemo.loadPage(FormsDemo.getNextPage())">&gt;</a>
+                <a href="#" onclick="FormsDemo.loadPage(2)">&gt;|</a>
+            </div>
+        </div>
+        <div style="display: table-cell;"><a href="#" onclick="var data=FormsDemo.getPdfData(); FormsDemo.dumpDataToDiv('info',data);">Show me all the data!</a></div>
+    </div>
+    <div style="display: table-row;">
+        <div style="display: table-cell; width:800px; border: double gray;"><div id="target"></div></div>
+        <div style="display: table-cell; vertical-align: top;"><div id="info"></div></div>
+    </div>
+</div>
+</body>
+</html>

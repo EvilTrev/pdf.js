@@ -14,7 +14,7 @@
  */
 /* jshint esnext:true */
 /* globals Components, Services, XPCOMUtils, PdfjsChromeUtils,
-           PdfjsContentUtils, DEFAULT_PREFERENCES, PdfStreamConverter */
+           PdfjsContentUtils, PdfStreamConverter */
 
 'use strict';
 
@@ -77,7 +77,11 @@ function isDefaultHandler() {
 }
 
 function initializeDefaultPreferences() {
-//#include ../../../web/default_preferences.js
+  var DEFAULT_PREFERENCES =
+//#include ../../../web/default_preferences.json
+//#if false
+    'end of DEFAULT_PREFERENCES';
+//#endif
 
   var defaultBranch = Services.prefs.getDefaultBranch(PREF_PREFIX + '.');
   var defaultValue;
@@ -262,7 +266,7 @@ var PdfJs = {
   /**
    * pdf.js is only enabled if it is both selected as the pdf viewer and if the
    * global switch enabling it is true.
-   * @return {boolean} Wether or not it's enabled.
+   * @return {boolean} Whether or not it's enabled.
    */
   get enabled() {
     var disabled = getBoolPref(PREF_DISABLED, true);

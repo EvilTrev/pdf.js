@@ -12,9 +12,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals mozL10n, getPDFFileNameFromURL, OverlayManager */
 
 'use strict';
+
+(function (root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('pdfjs-web/pdf_document_properties', ['exports',
+      'pdfjs-web/ui_utils', 'pdfjs-web/overlay_manager'], factory);
+  } else if (typeof exports !== 'undefined') {
+    factory(exports, require('./ui_utils.js'), require('./overlay_manager.js'));
+  } else {
+    factory((root.pdfjsWebPDFDocumentProperties = {}), root.pdfjsWebUIUtils,
+      root.pdfjsWebOverlayManager);
+  }
+}(this, function (exports, uiUtils, overlayManager) {
+
+var getPDFFileNameFromURL = uiUtils.getPDFFileNameFromURL;
+var mozL10n = uiUtils.mozL10n;
+var OverlayManager = overlayManager.OverlayManager;
 
 /**
  * @typedef {Object} PDFDocumentPropertiesOptions
@@ -34,6 +49,7 @@ var PDFDocumentProperties = (function PDFDocumentPropertiesClosure() {
   function PDFDocumentProperties(options) {
     this.fields = options.fields;
     this.overlayName = options.overlayName;
+    this.container = options.container;
 
     this.rawFileSize = 0;
     this.url = null;
@@ -48,7 +64,8 @@ var PDFDocumentProperties = (function PDFDocumentPropertiesClosure() {
       this.resolveDataAvailable = resolve;
     }.bind(this));
 
-    OverlayManager.register(this.overlayName, this.close.bind(this));
+    OverlayManager.register(this.overlayName, this.container,
+                            this.close.bind(this));
   }
 
   PDFDocumentProperties.prototype = {
@@ -222,3 +239,6 @@ var PDFDocumentProperties = (function PDFDocumentPropertiesClosure() {
 
   return PDFDocumentProperties;
 })();
+
+exports.PDFDocumentProperties = PDFDocumentProperties;
+}));

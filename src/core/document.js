@@ -42,11 +42,13 @@ var error = sharedUtil.error;
 var info = sharedUtil.info;
 var isArray = sharedUtil.isArray;
 var isArrayBuffer = sharedUtil.isArrayBuffer;
+var isNum = sharedUtil.isNum;
 var isString = sharedUtil.isString;
 var shadow = sharedUtil.shadow;
 var stringToBytes = sharedUtil.stringToBytes;
 var stringToPDFString = sharedUtil.stringToPDFString;
 var warn = sharedUtil.warn;
+var isSpace = sharedUtil.isSpace;
 var Dict = corePrimitives.Dict;
 var isDict = corePrimitives.isDict;
 var isName = corePrimitives.isName;
@@ -57,7 +59,6 @@ var StreamsSequenceStream = coreStream.StreamsSequenceStream;
 var Catalog = coreObj.Catalog;
 var ObjectLoader = coreObj.ObjectLoader;
 var XRef = coreObj.XRef;
-var Lexer = coreParser.Lexer;
 var Linearization = coreParser.Linearization;
 var calculateMD5 = coreCrypto.calculateMD5;
 var OperatorList = coreEvaluator.OperatorList;
@@ -67,6 +68,7 @@ var AnnotationFactory = coreAnnotation.AnnotationFactory;
 
 var Page = (function PageClosure() {
 
+  var DEFAULT_USER_UNIT = 1.0;
   var LETTER_SIZE_MEDIABOX = [0, 0, 612, 792];
 
   function Page(pdfManager, xref, pageIndex, pageDict, ref, fontCache) {
@@ -76,9 +78,11 @@ var Page = (function PageClosure() {
     this.xref = xref;
     this.ref = ref;
     this.fontCache = fontCache;
+    this.uniquePrefix = 'p' + this.pageIndex + '_';
     this.idCounters = {
       obj: 0
     };
+    this.evaluatorOptions = pdfManager.evaluatorOptions;
     this.resourcesPromise = null;
   }
 
@@ -134,6 +138,14 @@ var Page = (function PageClosure() {
         obj = LETTER_SIZE_MEDIABOX;
       }
       return shadow(this, 'mediaBox', obj);
+    },
+
+    get userUnit() {
+      var obj = this.getPageProp('UserUnit');
+      if (!isNum(obj) || obj <= 0) {
+        obj = DEFAULT_USER_UNIT;
+      }
+      return shadow(this, 'userUnit', obj);
     },
 
     get view() {
@@ -203,7 +215,8 @@ var Page = (function PageClosure() {
       }.bind(this));
     },
 
-    getOperatorList: function Page_getOperatorList(handler, task, intent) {
+    getOperatorList: function Page_getOperatorList(handler, task, intent,
+                                                   renderInteractiveForms) {
       var self = this;
 
       var pdfManager = this.pdfManager;
@@ -222,9 +235,10 @@ var Page = (function PageClosure() {
 
       var partialEvaluator = new PartialEvaluator(pdfManager, this.xref,
                                                   handler, this.pageIndex,
-                                                  'p' + this.pageIndex + '_',
+                                                  this.uniquePrefix,
                                                   this.idCounters,
-                                                  this.fontCache);
+                                                  this.fontCache,
+                                                  this.evaluatorOptions);
 
       var dataPromises = Promise.all([contentStreamPromise, resourcesPromise]);
       var pageListPromise = dataPromises.then(function(data) {
@@ -254,7 +268,8 @@ var Page = (function PageClosure() {
         }
 
         var annotationsReadyPromise = Annotation.appendToOperatorList(
-          annotations, pageOpList, partialEvaluator, task, intent);
+          annotations, pageOpList, partialEvaluator, task, intent,
+          renderInteractiveForms);
         return annotationsReadyPromise.then(function () {
           pageOpList.flush(true);
           return pageOpList;
@@ -263,7 +278,8 @@ var Page = (function PageClosure() {
     },
 
     extractTextContent: function Page_extractTextContent(task,
-                                                         normalizeWhitespace) {
+                                                         normalizeWhitespace,
+                                                         combineTextItems) {
       var handler = {
         on: function nullHandlerOn() {},
         send: function nullHandlerSend() {}
@@ -287,15 +303,17 @@ var Page = (function PageClosure() {
         var contentStream = data[0];
         var partialEvaluator = new PartialEvaluator(pdfManager, self.xref,
                                                     handler, self.pageIndex,
-                                                    'p' + self.pageIndex + '_',
+                                                    self.uniquePrefix,
                                                     self.idCounters,
-                                                    self.fontCache);
+                                                    self.fontCache,
+                                                    self.evaluatorOptions);
 
         return partialEvaluator.getTextContent(contentStream,
                                                task,
                                                self.resources,
                                                /* stateManager = */ null,
-                                               normalizeWhitespace);
+                                               normalizeWhitespace,
+                                               combineTextItems);
       });
     },
 
@@ -320,7 +338,10 @@ var Page = (function PageClosure() {
       var annotationFactory = new AnnotationFactory();
       for (var i = 0, n = annotationRefs.length; i < n; ++i) {
         var annotationRef = annotationRefs[i];
-        var annotation = annotationFactory.create(this.xref, annotationRef);
+        var annotation = annotationFactory.create(this.xref, annotationRef,
+                                                  this.pdfManager,
+                                                  this.uniquePrefix,
+                                                  this.idCounters);
         if (annotation) {
           annotations.push(annotation);
         }
@@ -467,7 +488,7 @@ var PDFDocument = (function PDFDocumentClosure() {
           var ch;
           do {
             ch = stream.getByte();
-          } while (Lexer.isSpace(ch));
+          } while (isSpace(ch));
           var str = '';
           while (ch >= 0x20 && ch <= 0x39) { // < '9'
             str += String.fromCharCode(ch);

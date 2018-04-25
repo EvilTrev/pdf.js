@@ -245,7 +245,8 @@ function validateFile(path, name, context) {
     if (name !== umd.amdId) {
       error('AMD name does not match module name');
     }
-    if (name.replace(/[_\/]/g, '') !== umd.jsRootName.toLowerCase()) {
+    if (name.replace(/[_\-\/]/g, '').toLowerCase() !==
+        umd.jsRootName.toLowerCase()) {
       error('root name does not look like module name');
     }
 
@@ -272,7 +273,7 @@ function validateFile(path, name, context) {
         return;
       }
       i = i.substring('root.'.length);
-      var j = umd.imports[index];
+      var j = umd.imports[index].replace(/(_|Lib)$/, '');
       var offset = i.toLowerCase().lastIndexOf(j.toLowerCase());
       if (offset + j.length !== i.length) {
         error('JS import name does not look like corresponding body import ' +
@@ -281,7 +282,7 @@ function validateFile(path, name, context) {
 
       j = umd.amdImports[index];
       if (j) {
-        if (j.replace(/[_\/]/g, '') !== i.toLowerCase()) {
+        if (j.replace(/[_\-\/]/g, '').toLowerCase() !== i.toLowerCase()) {
           error('JS import name does not look like corresponding AMD import ' +
             'name: ' + i + ' vs ' + j);
         }
@@ -294,7 +295,7 @@ function validateFile(path, name, context) {
       }
       var noExtension = i.replace(/\.js$/, '');
       if (noExtension === i || i[0] !== '.') {
-        warn('CommonJS shall have relative path and extension: ' + i);
+        error('CommonJS shall have relative path and extension: ' + i);
         return;
       }
       var base = name.split('/');
@@ -454,13 +455,13 @@ function validateFiles(paths, options) {
   };
 
   // Finds all files.
+  var foundFiles = [];
   for (var name in paths) {
     if (!paths.hasOwnProperty(name)) {
       continue;
     }
     var path = paths[name];
     var stats = fs.statSync(path);
-    var foundFiles = [];
     if (stats.isFile()) {
       foundFiles.push({path: path, name: name});
     } else if (stats.isDirectory()) {

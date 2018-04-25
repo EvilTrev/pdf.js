@@ -12,13 +12,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals PDFJS */
 
 'use strict';
+
+(function (root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('pdfjs-web/pdf_attachment_viewer', ['exports', 'pdfjs-web/pdfjs'],
+      factory);
+  } else if (typeof exports !== 'undefined') {
+    factory(exports, require('./pdfjs.js'));
+  } else {
+    factory((root.pdfjsWebPDFAttachmentViewer = {}), root.pdfjsWebPDFJS);
+  }
+}(this, function (exports, pdfjsLib) {
 
 /**
  * @typedef {Object} PDFAttachmentViewerOptions
  * @property {HTMLDivElement} container - The viewer element.
+ * @property {EventBus} eventBus - The application event bus.
  * @property {DownloadManager} downloadManager - The download manager.
  */
 
@@ -38,6 +49,7 @@ var PDFAttachmentViewer = (function PDFAttachmentViewerClosure() {
   function PDFAttachmentViewer(options) {
     this.attachments = null;
     this.container = options.container;
+    this.eventBus = options.eventBus;
     this.downloadManager = options.downloadManager;
   }
 
@@ -56,11 +68,10 @@ var PDFAttachmentViewer = (function PDFAttachmentViewerClosure() {
      */
     _dispatchEvent:
         function PDFAttachmentViewer_dispatchEvent(attachmentsCount) {
-      var event = document.createEvent('CustomEvent');
-      event.initCustomEvent('attachmentsloaded', true, true, {
+      this.eventBus.dispatch('attachmentsloaded', {
+        source: this,
         attachmentsCount: attachmentsCount
       });
-      this.container.dispatchEvent(event);
     },
 
     /**
@@ -98,12 +109,12 @@ var PDFAttachmentViewer = (function PDFAttachmentViewerClosure() {
 
       for (var i = 0; i < attachmentsCount; i++) {
         var item = attachments[names[i]];
-        var filename = PDFJS.getFilenameFromUrl(item.filename);
+        var filename = pdfjsLib.getFilenameFromUrl(item.filename);
         var div = document.createElement('div');
         div.className = 'attachmentsItem';
         var button = document.createElement('button');
         this._bindLink(button, item.content, filename);
-        button.textContent = PDFJS.removeNullCharacters(filename);
+        button.textContent = pdfjsLib.removeNullCharacters(filename);
         div.appendChild(button);
         this.container.appendChild(div);
       }
@@ -114,3 +125,6 @@ var PDFAttachmentViewer = (function PDFAttachmentViewerClosure() {
 
   return PDFAttachmentViewer;
 })();
+
+exports.PDFAttachmentViewer = PDFAttachmentViewer;
+}));

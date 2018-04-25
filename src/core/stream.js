@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals PDFJS */
 
 'use strict';
 
@@ -35,20 +34,18 @@
 var Util = sharedUtil.Util;
 var error = sharedUtil.error;
 var info = sharedUtil.info;
+var isInt = sharedUtil.isInt;
 var isArray = sharedUtil.isArray;
+var createObjectURL = sharedUtil.createObjectURL;
 var shadow = sharedUtil.shadow;
 var warn = sharedUtil.warn;
+var isSpace = sharedUtil.isSpace;
 var Dict = corePrimitives.Dict;
+var isDict = corePrimitives.isDict;
+var isStream = corePrimitives.isStream;
 var Jbig2Image = coreJbig2.Jbig2Image;
 var JpegImage = coreJpg.JpegImage;
 var JpxImage = coreJpx.JpxImage;
-
-var coreParser; // see _setCoreParser below
-var EOF; // = coreParser.EOF;
-var Lexer; // = coreParser.Lexer;
-
-var coreColorSpace; // see _setCoreColorSpace below
-var ColorSpace; // = coreColorSpace.ColorSpace;
 
 var Stream = (function StreamClosure() {
   function Stream(arrayBuffer, start, length, dict) {
@@ -687,6 +684,9 @@ var FlateStream = (function FlateStreamClosure() {
 
 var PredictorStream = (function PredictorStreamClosure() {
   function PredictorStream(str, maybeLength, params) {
+    if (!isDict(params)) {
+      return str; // no prediction
+    }
     var predictor = this.predictor = params.get('Predictor') || 1;
 
     if (predictor <= 1) {
@@ -893,7 +893,7 @@ var PredictorStream = (function PredictorStreamClosure() {
  * DecodeStreams.
  */
 var JpegStream = (function JpegStreamClosure() {
-  function JpegStream(stream, maybeLength, dict, xref) {
+  function JpegStream(stream, maybeLength, dict, params) {
     // Some images may contain 'junk' before the SOI (start-of-image) marker.
     // Note: this seems to mainly affect inline images.
     var ch;
@@ -906,6 +906,7 @@ var JpegStream = (function JpegStreamClosure() {
     this.stream = stream;
     this.maybeLength = maybeLength;
     this.dict = dict;
+    this.params = params;
 
     DecodeStream.call(this, maybeLength);
   }
@@ -924,38 +925,41 @@ var JpegStream = (function JpegStreamClosure() {
     if (this.bufferLength) {
       return;
     }
-    try {
-      var jpegImage = new JpegImage();
+    var jpegImage = new JpegImage();
 
-      // checking if values needs to be transformed before conversion
-      if (this.forceRGB && this.dict && isArray(this.dict.get('Decode'))) {
-        var decodeArr = this.dict.get('Decode');
-        var bitsPerComponent = this.dict.get('BitsPerComponent') || 8;
-        var decodeArrLength = decodeArr.length;
-        var transform = new Int32Array(decodeArrLength);
-        var transformNeeded = false;
-        var maxValue = (1 << bitsPerComponent) - 1;
-        for (var i = 0; i < decodeArrLength; i += 2) {
-          transform[i] = ((decodeArr[i + 1] - decodeArr[i]) * 256) | 0;
-          transform[i + 1] = (decodeArr[i] * maxValue) | 0;
-          if (transform[i] !== 256 || transform[i + 1] !== 0) {
-            transformNeeded = true;
-          }
-        }
-        if (transformNeeded) {
-          jpegImage.decodeTransform = transform;
+    // Checking if values need to be transformed before conversion.
+    var decodeArr = this.dict.getArray('Decode', 'D');
+    if (this.forceRGB && isArray(decodeArr)) {
+      var bitsPerComponent = this.dict.get('BitsPerComponent') || 8;
+      var decodeArrLength = decodeArr.length;
+      var transform = new Int32Array(decodeArrLength);
+      var transformNeeded = false;
+      var maxValue = (1 << bitsPerComponent) - 1;
+      for (var i = 0; i < decodeArrLength; i += 2) {
+        transform[i] = ((decodeArr[i + 1] - decodeArr[i]) * 256) | 0;
+        transform[i + 1] = (decodeArr[i] * maxValue) | 0;
+        if (transform[i] !== 256 || transform[i + 1] !== 0) {
+          transformNeeded = true;
         }
       }
-
-      jpegImage.parse(this.bytes);
-      var data = jpegImage.getData(this.drawWidth, this.drawHeight,
-                                   this.forceRGB);
-      this.buffer = data;
-      this.bufferLength = data.length;
-      this.eof = true;
-    } catch (e) {
-      error('JPEG error: ' + e);
+      if (transformNeeded) {
+        jpegImage.decodeTransform = transform;
+      }
     }
+    // Fetching the 'ColorTransform' entry, if it exists.
+    if (isDict(this.params)) {
+      var colorTransform = this.params.get('ColorTransform');
+      if (isInt(colorTransform)) {
+        jpegImage.colorTransform = colorTransform;
+      }
+    }
+
+    jpegImage.parse(this.bytes);
+    var data = jpegImage.getData(this.drawWidth, this.drawHeight,
+                                 this.forceRGB);
+    this.buffer = data;
+    this.bufferLength = data.length;
+    this.eof = true;
   };
 
   JpegStream.prototype.getBytes = function JpegStream_getBytes(length) {
@@ -963,27 +967,8 @@ var JpegStream = (function JpegStreamClosure() {
     return this.buffer;
   };
 
-  JpegStream.prototype.getIR = function JpegStream_getIR() {
-    return PDFJS.createObjectURL(this.bytes, 'image/jpeg');
-  };
-  /**
-   * Checks if the image can be decoded and displayed by the browser without any
-   * further processing such as color space conversions.
-   */
-  JpegStream.prototype.isNativelySupported =
-      function JpegStream_isNativelySupported(xref, res) {
-    var cs = ColorSpace.parse(this.dict.get('ColorSpace', 'CS'), xref, res);
-    return (cs.name === 'DeviceGray' || cs.name === 'DeviceRGB') &&
-           cs.isDefaultDecode(this.dict.get('Decode', 'D'));
-  };
-  /**
-   * Checks if the image can be decoded by the browser.
-   */
-  JpegStream.prototype.isNativelyDecodable =
-      function JpegStream_isNativelyDecodable(xref, res) {
-    var cs = ColorSpace.parse(this.dict.get('ColorSpace', 'CS'), xref, res);
-    return (cs.numComps === 1 || cs.numComps === 3) &&
-           cs.isDefaultDecode(this.dict.get('Decode', 'D'));
+  JpegStream.prototype.getIR = function JpegStream_getIR(forceDataSchema) {
+    return createObjectURL(this.bytes, 'image/jpeg', forceDataSchema);
   };
 
   return JpegStream;
@@ -994,10 +979,11 @@ var JpegStream = (function JpegStreamClosure() {
  * the stream behaves like all the other DecodeStreams.
  */
 var JpxStream = (function JpxStreamClosure() {
-  function JpxStream(stream, maybeLength, dict) {
+  function JpxStream(stream, maybeLength, dict, params) {
     this.stream = stream;
     this.maybeLength = maybeLength;
     this.dict = dict;
+    this.params = params;
 
     DecodeStream.call(this, maybeLength);
   }
@@ -1063,10 +1049,11 @@ var JpxStream = (function JpxStreamClosure() {
  * the stream behaves like all the other DecodeStreams.
  */
 var Jbig2Stream = (function Jbig2StreamClosure() {
-  function Jbig2Stream(stream, maybeLength, dict) {
+  function Jbig2Stream(stream, maybeLength, dict, params) {
     this.stream = stream;
     this.maybeLength = maybeLength;
     this.dict = dict;
+    this.params = params;
 
     DecodeStream.call(this, maybeLength);
   }
@@ -1088,22 +1075,13 @@ var Jbig2Stream = (function Jbig2StreamClosure() {
 
     var jbig2Image = new Jbig2Image();
 
-    var chunks = [], xref = this.dict.xref;
-    var decodeParams = xref.fetchIfRef(this.dict.get('DecodeParms'));
-
-    // According to the PDF specification, DecodeParms can be either
-    // a dictionary, or an array whose elements are dictionaries.
-    if (isArray(decodeParams)) {
-      if (decodeParams.length > 1) {
-        warn('JBIG2 - \'DecodeParms\' array with multiple elements ' +
-             'not supported.');
+    var chunks = [];
+    if (isDict(this.params)) {
+      var globalsStream = this.params.get('JBIG2Globals');
+      if (isStream(globalsStream)) {
+        var globals = globalsStream.getBytes();
+        chunks.push({data: globals, start: 0, end: globals.length});
       }
-      decodeParams = xref.fetchIfRef(decodeParams[0]);
-    }
-    if (decodeParams && decodeParams.has('JBIG2Globals')) {
-      var globalsStream = decodeParams.get('JBIG2Globals');
-      var globals = globalsStream.getBytes();
-      chunks.push({data: globals, start: 0, end: globals.length});
     }
     chunks.push({data: this.bytes, start: 0, end: this.bytes.length});
     var data = jbig2Image.parseChunks(chunks);
@@ -1191,7 +1169,7 @@ var Ascii85Stream = (function Ascii85StreamClosure() {
     var str = this.str;
 
     var c = str.getByte();
-    while (Lexer.isSpace(c)) {
+    while (isSpace(c)) {
       c = str.getByte();
     }
 
@@ -1215,7 +1193,7 @@ var Ascii85Stream = (function Ascii85StreamClosure() {
       input[0] = c;
       for (i = 1; i < 5; ++i) {
         c = str.getByte();
-        while (Lexer.isSpace(c)) {
+        while (isSpace(c)) {
           c = str.getByte();
         }
 
@@ -1362,6 +1340,7 @@ var RunLengthStream = (function RunLengthStreamClosure() {
 var CCITTFaxStream = (function CCITTFaxStreamClosure() {
 
   var ccittEOL = -2;
+  var ccittEOF = -1;
   var twoDimPass = 0;
   var twoDimHoriz = 1;
   var twoDimVert0 = 2;
@@ -2044,7 +2023,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
                 }
               }
               break;
-            case EOF:
+            case ccittEOF:
               this.addPixels(columns, 0);
               this.eof = true;
               break;
@@ -2085,7 +2064,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
       } else {
         code1 = this.lookBits(12);
         if (this.eoline) {
-          while (code1 !== EOF && code1 !== 1) {
+          while (code1 !== ccittEOF && code1 !== 1) {
             this.eatBits(1);
             code1 = this.lookBits(12);
           }
@@ -2098,7 +2077,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
         if (code1 === 1) {
           this.eatBits(12);
           gotEOL = true;
-        } else if (code1 === EOF) {
+        } else if (code1 === ccittEOF) {
           this.eof = true;
         }
       }
@@ -2134,7 +2113,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
       } else if (this.err && this.eoline) {
         while (true) {
           code1 = this.lookBits(13);
-          if (code1 === EOF) {
+          if (code1 === ccittEOF) {
             this.eof = true;
             return null;
           }
@@ -2214,7 +2193,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
     var limitValue = limit || 0;
     for (var i = start; i <= end; ++i) {
       var code = this.lookBits(i);
-      if (code === EOF) {
+      if (code === ccittEOF) {
         return [true, 1, false];
       }
       if (i < end) {
@@ -2250,7 +2229,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
       }
     }
     info('Bad two dim code');
-    return EOF;
+    return ccittEOF;
   };
 
   CCITTFaxStream.prototype.getWhiteCode =
@@ -2260,7 +2239,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
     var p;
     if (this.eoblock) {
       code = this.lookBits(12);
-      if (code === EOF) {
+      if (code === ccittEOF) {
         return 1;
       }
 
@@ -2296,7 +2275,7 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
     var code, p;
     if (this.eoblock) {
       code = this.lookBits(13);
-      if (code === EOF) {
+      if (code === ccittEOF) {
         return 1;
       }
       if ((code >> 7) === 0) {
@@ -2337,12 +2316,12 @@ var CCITTFaxStream = (function CCITTFaxStreamClosure() {
     while (this.inputBits < n) {
       if ((c = this.str.getByte()) === -1) {
         if (this.inputBits === 0) {
-          return EOF;
+          return ccittEOF;
         }
         return ((this.inputBuf << (n - this.inputBits)) &
                 (0xFFFF >> (16 - n)));
       }
-      this.inputBuf = (this.inputBuf << 8) + c;
+      this.inputBuf = (this.inputBuf << 8) | c;
       this.inputBits += 8;
     }
     return (this.inputBuf >> (this.inputBits - n)) & (0xFFFF >> (16 - n));
@@ -2497,21 +2476,6 @@ var NullStream = (function NullStreamClosure() {
 
   return NullStream;
 })();
-
-// TODO refactor to remove dependency on parser.js
-function _setCoreParser(coreParser_) {
-  coreParser = coreParser_;
-  EOF = coreParser_.EOF;
-  Lexer = coreParser_.Lexer;
-}
-exports._setCoreParser = _setCoreParser;
-
-// TODO refactor to remove dependency on colorspace.js
-function _setCoreColorSpace(coreColorSpace_) {
-  coreColorSpace = coreColorSpace_;
-  ColorSpace = coreColorSpace_.ColorSpace;
-}
-exports._setCoreColorSpace = _setCoreColorSpace;
 
 exports.Ascii85Stream = Ascii85Stream;
 exports.AsciiHexStream = AsciiHexStream;

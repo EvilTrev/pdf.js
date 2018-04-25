@@ -12,12 +12,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals URL, PDFJS */
 
 'use strict';
 
-var DownloadManager = (function DownloadManagerClosure() {
-
+(function (root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('pdfjs-web/download_manager', ['exports', 'pdfjs-web/pdfjs'],
+      factory);
+  } else if (typeof exports !== 'undefined') {
+    factory(exports, require('./pdfjs.js'));
+  } else {
+    factory((root.pdfjsWebDownloadManager = {}), root.pdfjsWebPDFJS);
+  }
+}(this, function (exports, pdfjsLib) {
+if (typeof PDFJSDev === 'undefined' || PDFJSDev.test('GENERIC || CHROME')) {
+  /* jshint -W082 */
   function download(blobUrl, filename) {
     var a = document.createElement('a');
     if (a.click) {
@@ -58,10 +67,9 @@ var DownloadManager = (function DownloadManagerClosure() {
 
   DownloadManager.prototype = {
     downloadUrl: function DownloadManager_downloadUrl(url, filename) {
-      if (!PDFJS.isValidUrl(url, true)) {
+      if (!pdfjsLib.createValidAbsoluteUrl(url, 'http://example.com')) {
         return; // restricted/invalid URL
       }
-
       download(url + '#pdfjs.action=download', filename);
     },
 
@@ -72,7 +80,8 @@ var DownloadManager = (function DownloadManagerClosure() {
                                     filename);
       }
 
-      var blobUrl = PDFJS.createObjectURL(data, contentType);
+      var blobUrl = pdfjsLib.createObjectURL(data, contentType,
+        pdfjsLib.PDFJS.disableCreateObjectURL);
       download(blobUrl, filename);
     },
 
@@ -96,5 +105,6 @@ var DownloadManager = (function DownloadManagerClosure() {
     }
   };
 
-  return DownloadManager;
-})();
+  exports.DownloadManager = DownloadManager;
+}
+}));

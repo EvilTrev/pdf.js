@@ -29,10 +29,11 @@
 }(this, function (exports, sharedUtil, coreArithmeticDecoder) {
 
 var info = sharedUtil.info;
+var warn = sharedUtil.warn;
+var error = sharedUtil.error;
 var log2 = sharedUtil.log2;
 var readUint16 = sharedUtil.readUint16;
 var readUint32 = sharedUtil.readUint32;
-var warn = sharedUtil.warn;
 var ArithmeticDecoder = coreArithmeticDecoder.ArithmeticDecoder;
 
 var JpxImage = (function JpxImageClosure() {
@@ -74,7 +75,7 @@ var JpxImage = (function JpxImageClosure() {
           lbox = length - position + headerSize;
         }
         if (lbox < headerSize) {
-          throw new Error('JPX Error: Invalid box field size');
+          error('JPX Error: Invalid box field size');
         }
         var dataLength = lbox - headerSize;
         var jumpDataLength = true;
@@ -152,12 +153,12 @@ var JpxImage = (function JpxImageClosure() {
           return;
         }
       }
-      throw new Error('JPX Error: No size marker found in JPX stream');
+      error('JPX Error: No size marker found in JPX stream');
     },
     parseCodestream: function JpxImage_parseCodestream(data, start, end) {
       var context = {};
+      var doNotRecover = false;
       try {
-        var doNotRecover = false;
         var position = start;
         while (position + 1 < end) {
           var code = readUint16(data, position);
@@ -220,7 +221,7 @@ var JpxImage = (function JpxImageClosure() {
                   scalarExpounded = true;
                   break;
                 default:
-                  throw new Error('JPX Error: Invalid SQcd value ' + sqcd);
+                  throw new Error('Invalid SQcd value ' + sqcd);
               }
               qcd.noQuantization = (spqcdSize === 8);
               qcd.scalarExpounded = scalarExpounded;
@@ -272,7 +273,7 @@ var JpxImage = (function JpxImageClosure() {
                   scalarExpounded = true;
                   break;
                 default:
-                  throw new Error('JPX Error: Invalid SQcd value ' + sqcd);
+                  throw new Error('Invalid SQcd value ' + sqcd);
               }
               qcc.noQuantization = (spqcdSize === 8);
               qcc.scalarExpounded = scalarExpounded;
@@ -350,7 +351,7 @@ var JpxImage = (function JpxImageClosure() {
               }
               if (unsupported.length > 0) {
                 doNotRecover = true;
-                throw new Error('JPX Error: Unsupported COD options (' +
+                throw new Error('Unsupported COD options (' +
                                 unsupported.join(', ') + ')');
               }
               if (context.mainHeader) {
@@ -398,19 +399,18 @@ var JpxImage = (function JpxImageClosure() {
               // skipping content
               break;
             case 0xFF53: // Coding style component (COC)
-              throw new Error('JPX Error: Codestream code 0xFF53 (COC) is ' +
+              throw new Error('Codestream code 0xFF53 (COC) is ' +
                               'not implemented');
             default:
-              throw new Error('JPX Error: Unknown codestream code: ' +
-                              code.toString(16));
+              throw new Error('Unknown codestream code: ' + code.toString(16));
           }
           position += length;
         }
       } catch (e) {
         if (doNotRecover || this.failOnCorruptedImage) {
-          throw e;
+          error('JPX Error: ' + e.message);
         } else {
-          warn('Trying to recover from ' + e.message);
+          warn('JPX: Trying to recover from: ' + e.message);
         }
       }
       this.tiles = transformComponents(context);
@@ -660,7 +660,7 @@ var JpxImage = (function JpxImageClosure() {
         }
         r = 0;
       }
-      throw new Error('JPX Error: Out of packets');
+      error('JPX Error: Out of packets');
     };
   }
   function ResolutionLayerComponentPositionIterator(context) {
@@ -700,7 +700,7 @@ var JpxImage = (function JpxImageClosure() {
         }
         l = 0;
       }
-      throw new Error('JPX Error: Out of packets');
+      error('JPX Error: Out of packets');
     };
   }
   function ResolutionPositionComponentLayerIterator(context) {
@@ -759,7 +759,7 @@ var JpxImage = (function JpxImageClosure() {
         }
         p = 0;
       }
-      throw new Error('JPX Error: Out of packets');
+      error('JPX Error: Out of packets');
     };
   }
   function PositionComponentResolutionLayerIterator(context) {
@@ -806,7 +806,7 @@ var JpxImage = (function JpxImageClosure() {
         }
         px = 0;
       }
-      throw new Error('JPX Error: Out of packets');
+      error('JPX Error: Out of packets');
     };
   }
   function ComponentPositionResolutionLayerIterator(context) {
@@ -852,7 +852,7 @@ var JpxImage = (function JpxImageClosure() {
         }
         py = 0;
       }
-      throw new Error('JPX Error: Out of packets');
+      error('JPX Error: Out of packets');
     };
   }
   function getPrecinctIndexIfExist(
@@ -1032,8 +1032,7 @@ var JpxImage = (function JpxImageClosure() {
           new ComponentPositionResolutionLayerIterator(context);
         break;
       default:
-        throw new Error('JPX Error: Unsupported progression order ' +
-                        progressionOrder);
+        error('JPX Error: Unsupported progression order ' + progressionOrder);
     }
   }
   function parseTilePackets(context, data, offset, dataLength) {
@@ -1259,7 +1258,7 @@ var JpxImage = (function JpxImageClosure() {
       for (j = 0; j < codingpasses; j++) {
         switch (currentCodingpassType) {
           case 0:
-            bitModel.runSignificancePropogationPass();
+            bitModel.runSignificancePropagationPass();
             break;
           case 1:
             bitModel.runMagnitudeRefinementPass();
@@ -1350,13 +1349,13 @@ var JpxImage = (function JpxImageClosure() {
         var subband = resolution.subbands[j];
         var gainLog2 = SubbandsGainLog2[subband.type];
 
-        // calulate quantization coefficient (Section E.1.1.1)
+        // calculate quantization coefficient (Section E.1.1.1)
         var delta = (reversible ? 1 :
           Math.pow(2, precision + gainLog2 - epsilon) * (1 + mu / 2048));
         var mb = (guardBits + epsilon - 1);
 
         // In the first resolution level, copyCoefficients will fill the
-        // whole array with coefficients. In the succeding passes,
+        // whole array with coefficients. In the succeeding passes,
         // copyCoefficients will consecutively fill in the values that belong
         // to the interleaved positions of the HL, LH, and HH coefficients.
         // The LL coefficients will then be interleaved in Transform.iterate().
@@ -1738,8 +1737,8 @@ var JpxImage = (function JpxImageClosure() {
         }
         neighborsSignificance[index] |= 0x80;
       },
-      runSignificancePropogationPass:
-        function BitModel_runSignificancePropogationPass() {
+      runSignificancePropagationPass:
+        function BitModel_runSignificancePropagationPass() {
         var decoder = this.decoder;
         var width = this.width, height = this.height;
         var coefficentsMagnitude = this.coefficentsMagnitude;
@@ -1970,7 +1969,7 @@ var JpxImage = (function JpxImageClosure() {
                      (decoder.readBit(contexts, UNIFORM_CONTEXT) << 1) |
                       decoder.readBit(contexts, UNIFORM_CONTEXT);
         if (symbol !== 0xA) {
-          throw new Error('JPX Error: Invalid segmentation symbol');
+          error('JPX Error: Invalid segmentation symbol');
         }
       }
     };
@@ -2136,7 +2135,7 @@ var JpxImage = (function JpxImageClosure() {
 
       // step 1 & 3
       j = offset - 2;
-      current = delta * x[j -1];
+      current = delta * x[j - 1];
       for (n = len + 3; n--; j += 2) {
         next = delta * x[j + 1];
         x[j] = K * x[j] - current - next;

@@ -408,9 +408,6 @@ var tests = [
       if ('setLineDash' in ctx) {
         ctx.setLineDash([10, 10]);
         ctx.lineDashOffset = 0;
-      } else {
-        ctx.mozDash = [10, 10];
-        ctx.mozDashOffset = 0;
       }
       ctx.stroke();
 
@@ -561,7 +558,7 @@ var tests = [
   },
   {
     id: 'Worker-xhr-response',
-    name: 'XMLHttpRequest supports the reponse property in web workers',
+    name: 'XMLHttpRequest supports the response property in web workers',
     run: function () {
       if (typeof Worker == 'undefined')
         return { output: 'Skipped', emulated: '' };

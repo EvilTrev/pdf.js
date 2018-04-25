@@ -12,12 +12,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* globals chrome */
 
 'use strict';
 
-var PDFHistory = (function () {
+(function (root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('pdfjs-web/pdf_history', ['exports', 'pdfjs-web/dom_events'],
+      factory);
+  } else if (typeof exports !== 'undefined') {
+    factory(exports, require('./dom_events.js'));
+  } else {
+    factory((root.pdfjsWebPDFHistory = {}), root.pdfjsWebDOMEvents);
+  }
+}(this, function (exports, domEvents) {
+
   function PDFHistory(options) {
     this.linkService = options.linkService;
+    this.eventBus = options.eventBus || domEvents.getGlobalEventBus();
 
     this.initialized = false;
     this.initialDestination = null;
@@ -27,7 +39,6 @@ var PDFHistory = (function () {
   PDFHistory.prototype = {
     /**
      * @param {string} fingerprint
-     * @param {IPDFLinkService} linkService
      */
     initialize: function pdfHistoryInitialize(fingerprint) {
       this.initialized = true;
@@ -164,8 +175,8 @@ var PDFHistory = (function () {
         window.addEventListener('beforeunload', pdfHistoryBeforeUnload, false);
       }, false);
 
-      window.addEventListener('presentationmodechanged', function(e) {
-        self.isViewerInPresentationMode = !!e.detail.active;
+      self.eventBus.on('presentationmodechanged', function(e) {
+        self.isViewerInPresentationMode = e.active;
       });
     },
 
@@ -181,30 +192,30 @@ var PDFHistory = (function () {
 
     _pushOrReplaceState: function pdfHistory_pushOrReplaceState(stateObj,
                                                                 replace) {
-//#if CHROME
       // history.state.chromecomState is managed by chromecom.js.
-      if (window.history.state && 'chromecomState' in window.history.state) {
+      if (typeof PDFJSDev !== 'undefined' && PDFJSDev.test('CHROME') &&
+          window.history.state && 'chromecomState' in window.history.state) {
         stateObj = stateObj || {};
         stateObj.chromecomState = window.history.state.chromecomState;
       }
-//#endif
       if (replace) {
-//#if (GENERIC || CHROME)
-        window.history.replaceState(stateObj, '', document.URL);
-//#else
-//    window.history.replaceState(stateObj, '');
-//#endif
+        if (typeof PDFJSDev === 'undefined' ||
+            PDFJSDev.test('GENERIC || CHROME')) {
+          window.history.replaceState(stateObj, '', document.URL);
+        } else {
+          window.history.replaceState(stateObj, '');
+        }
       } else {
-//#if (GENERIC || CHROME)
-        window.history.pushState(stateObj, '', document.URL);
-//#else
-//    window.history.pushState(stateObj, '');
-//#endif
-//#if CHROME
-//    if (top === window) {
-//      chrome.runtime.sendMessage('showPageAction');
-//    }
-//#endif
+        if (typeof PDFJSDev === 'undefined' ||
+            PDFJSDev.test('GENERIC || CHROME')) {
+          window.history.pushState(stateObj, '', document.URL);
+        } else {
+          window.history.pushState(stateObj, '');
+        }
+        if (typeof PDFJSDev !== 'undefined' && PDFJSDev.test('CHROME') &&
+            top === window) {
+          chrome.runtime.sendMessage('showPageAction');
+        }
       }
     },
 
@@ -423,5 +434,5 @@ var PDFHistory = (function () {
     }
   };
 
-  return PDFHistory;
-})();
+  exports.PDFHistory = PDFHistory;
+}));

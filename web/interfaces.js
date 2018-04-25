@@ -98,9 +98,11 @@ IPDFTextLayerFactory.prototype = {
    * @param {HTMLDivElement} textLayerDiv
    * @param {number} pageIndex
    * @param {PageViewport} viewport
+   * @param {boolean} enhanceTextSelection
    * @returns {TextLayerBuilder}
    */
-  createTextLayerBuilder: function (textLayerDiv, pageIndex, viewport) {}
+  createTextLayerBuilder: function (textLayerDiv, pageIndex, viewport,
+                                    enhanceTextSelection) {}
 };
 
 /**
@@ -111,7 +113,9 @@ IPDFAnnotationLayerFactory.prototype = {
   /**
    * @param {HTMLDivElement} pageDiv
    * @param {PDFPage} pdfPage
+   * @param {boolean} renderInteractiveForms
    * @returns {AnnotationLayerBuilder}
    */
-  createAnnotationLayerBuilder: function (pageDiv, pdfPage) {}
+  createAnnotationLayerBuilder: function (pageDiv, pdfPage,
+                                          renderInteractiveForms) {}
 };

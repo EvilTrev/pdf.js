@@ -15,6 +15,16 @@
 
 'use strict';
 
+(function (root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define('pdfjs-web/view_history', ['exports'], factory);
+  } else if (typeof exports !== 'undefined') {
+    factory(exports);
+  } else {
+    factory((root.pdfjsWebViewHistory = {}));
+  }
+}(this, function (exports) {
+
 var DEFAULT_VIEW_HISTORY_CACHE_SIZE = 20;
 
 /**
@@ -22,7 +32,7 @@ var DEFAULT_VIEW_HISTORY_CACHE_SIZE = 20;
  *                recently opened files.
  *
  * The way that the view parameters are stored depends on how PDF.js is built,
- * for 'node make <flag>' the following cases exist:
+ * for 'gulp <flag>' the following cases exist:
  *  - FIREFOX or MOZCENTRAL - uses sessionStorage.
  *  - GENERIC or CHROME     - uses localStorage, if it is available.
  */
@@ -63,27 +73,43 @@ var ViewHistory = (function ViewHistoryClosure() {
       return new Promise(function (resolve) {
         var databaseStr = JSON.stringify(this.database);
 
-//#if FIREFOX || MOZCENTRAL
-//      sessionStorage.setItem('pdfjsHistory', databaseStr);
-//      resolve();
-//#endif
-
-//#if !(FIREFOX || MOZCENTRAL)
-        localStorage.setItem('database', databaseStr);
+        if (typeof PDFJSDev !== 'undefined' &&
+            PDFJSDev.test('FIREFOX || MOZCENTRAL')) {
+          sessionStorage.setItem('pdfjs.history', databaseStr);
+        } else {
+          localStorage.setItem('pdfjs.history', databaseStr);
+        }
         resolve();
-//#endif
       }.bind(this));
     },
 
     _readFromStorage: function ViewHistory_readFromStorage() {
       return new Promise(function (resolve) {
-//#if FIREFOX || MOZCENTRAL
-//      resolve(sessionStorage.getItem('pdfjsHistory'));
-//#endif
+        if (typeof PDFJSDev !== 'undefined' &&
+            PDFJSDev.test('FIREFOX || MOZCENTRAL')) {
+          resolve(sessionStorage.getItem('pdfjs.history'));
+        } else {
+          var value = localStorage.getItem('pdfjs.history');
 
-//#if !(FIREFOX || MOZCENTRAL)
-        resolve(localStorage.getItem('database'));
-//#endif
+          // TODO: Remove this key-name conversion after a suitable time-frame.
+          // Note that we only remove the old 'database' entry if it looks like
+          // it was created by PDF.js. to avoid removing someone else's data.
+          if (!value) {
+            var databaseStr = localStorage.getItem('database');
+            if (databaseStr) {
+              try {
+                var database = JSON.parse(databaseStr);
+                if (typeof database.files[0].fingerprint === 'string') {
+                  localStorage.setItem('pdfjs.history', databaseStr);
+                  localStorage.removeItem('database');
+                  value = databaseStr;
+                }
+              } catch (ex) { }
+            }
+          }
+
+          resolve(value);
+        }
       });
     },
 
@@ -115,3 +141,6 @@ var ViewHistory = (function ViewHistoryClosure() {
 
   return ViewHistory;
 })();
+
+exports.ViewHistory = ViewHistory;
+}));

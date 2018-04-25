@@ -12,22 +12,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals MozBlobBuilder, URL */
+/* globals URL, global */
 
 'use strict';
 
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
-    define('pdfjs/shared/util', ['exports', 'pdfjs/shared/global'], factory);
+    define('pdfjs/shared/util', ['exports'], factory);
   } else if (typeof exports !== 'undefined') {
-    factory(exports, require('./global.js'));
+    factory(exports);
   } else {
-    factory((root.pdfjsSharedUtil = {}), root.pdfjsSharedGlobal);
+    factory((root.pdfjsSharedUtil = {}));
   }
-}(this, function (exports, sharedGlobal) {
+}(this, function (exports) {
 
-var PDFJS = sharedGlobal.PDFJS;
-var globalScope = sharedGlobal.globalScope;
+var globalScope = (typeof window !== 'undefined') ? window :
+                  (typeof global !== 'undefined') ? global :
+                  (typeof self !== 'undefined') ? self : this;
 
 var FONT_IDENTITY_MATRIX = [0.001, 0, 0, 0.001, 0, 0];
 
@@ -92,6 +93,28 @@ var AnnotationFlag = {
   LOCKEDCONTENTS: 0x200
 };
 
+var AnnotationFieldFlag = {
+  READONLY: 0x0000001,
+  REQUIRED: 0x0000002,
+  NOEXPORT: 0x0000004,
+  MULTILINE: 0x0001000,
+  PASSWORD: 0x0002000,
+  NOTOGGLETOOFF: 0x0004000,
+  RADIO: 0x0008000,
+  PUSHBUTTON: 0x0010000,
+  COMBO: 0x0020000,
+  EDIT: 0x0040000,
+  SORT: 0x0080000,
+  FILESELECT: 0x0100000,
+  MULTISELECT: 0x0200000,
+  DONOTSPELLCHECK: 0x0400000,
+  DONOTSCROLL: 0x0800000,
+  COMB: 0x1000000,
+  RICHTEXT: 0x2000000,
+  RADIOSINUNISON: 0x2000000,
+  COMMITONSELCHANGE: 0x4000000,
+};
+
 var AnnotationBorderStyleType = {
   SOLID: 1,
   DASHED: 2,
@@ -127,14 +150,14 @@ var FontType = {
   MMTYPE1: 10
 };
 
-PDFJS.VERBOSITY_LEVELS = {
+var VERBOSITY_LEVELS = {
   errors: 0,
   warnings: 1,
   infos: 5
 };
 
 // All the possible operations for an operator list.
-var OPS = PDFJS.OPS = {
+var OPS = {
   // Intentionally start from 1 so it is easy to spot bad operators that will be
   // 0's.
   dependency: 1,
@@ -230,18 +253,28 @@ var OPS = PDFJS.OPS = {
   constructPath: 91
 };
 
+var verbosity = VERBOSITY_LEVELS.warnings;
+
+function setVerbosityLevel(level) {
+  verbosity = level;
+}
+
+function getVerbosityLevel() {
+  return verbosity;
+}
+
 // A notice for devs. These are good for things that are helpful to devs, such
 // as warning that Workers were disabled, which is important to devs but not
 // end users.
 function info(msg) {
-  if (PDFJS.verbosity >= PDFJS.VERBOSITY_LEVELS.infos) {
+  if (verbosity >= VERBOSITY_LEVELS.infos) {
     console.log('Info: ' + msg);
   }
 }
 
 // Non-fatal warnings.
 function warn(msg) {
-  if (PDFJS.verbosity >= PDFJS.VERBOSITY_LEVELS.warnings) {
+  if (verbosity >= VERBOSITY_LEVELS.warnings) {
     console.log('Warning: ' + msg);
   }
 }
@@ -254,7 +287,7 @@ function deprecated(details) {
 // Fatal errors that should trigger the fallback UI and halt execution by
 // throwing an exception.
 function error(msg) {
-  if (PDFJS.verbosity >= PDFJS.VERBOSITY_LEVELS.errors) {
+  if (verbosity >= VERBOSITY_LEVELS.errors) {
     console.log('Error: ' + msg);
     console.log(backtrace());
   }
@@ -275,7 +308,7 @@ function assert(cond, msg) {
   }
 }
 
-var UNSUPPORTED_FEATURES = PDFJS.UNSUPPORTED_FEATURES = {
+var UNSUPPORTED_FEATURES = {
   unknown: 'unknown',
   forms: 'forms',
   javaScript: 'javaScript',
@@ -283,26 +316,6 @@ var UNSUPPORTED_FEATURES = PDFJS.UNSUPPORTED_FEATURES = {
   shadingPattern: 'shadingPattern',
   font: 'font'
 };
-
-// Gets the file name from a given URL.
-function getFilenameFromUrl(url) {
-  var anchor = url.indexOf('#');
-  var query = url.indexOf('?');
-  var end = Math.min(
-    anchor > 0 ? anchor : url.length,
-    query > 0 ? query : url.length);
-  return url.substring(url.lastIndexOf('/', end) + 1, end);
-}
-PDFJS.getFilenameFromUrl = getFilenameFromUrl;
-
-// Combines two URLs. The baseUrl shall be absolute URL. If the url is an
-// absolute URL, it will be returned as is.
-function combineUrl(baseUrl, url) {
-  if (!url) {
-    return baseUrl;
-  }
-  return new URL(url, baseUrl).href;
-}
 
 // Checks if URLs have the same origin. For non-HTTP based URLs, returns false.
 function isSameOrigin(baseUrl, otherUrl) {
@@ -319,50 +332,41 @@ function isSameOrigin(baseUrl, otherUrl) {
   return base.origin === other.origin;
 }
 
-// Validates if URL is safe and allowed, e.g. to avoid XSS.
-function isValidUrl(url, allowRelative) {
+// Checks if URLs use one of the whitelisted protocols, e.g. to avoid XSS.
+function isValidProtocol(url) {
   if (!url) {
     return false;
   }
-  // RFC 3986 (http://tools.ietf.org/html/rfc3986#section-3.1)
-  // scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
-  var protocol = /^[a-z][a-z0-9+\-.]*(?=:)/i.exec(url);
-  if (!protocol) {
-    return allowRelative;
-  }
-  protocol = protocol[0].toLowerCase();
-  switch (protocol) {
-    case 'http':
-    case 'https':
-    case 'ftp':
-    case 'mailto':
-    case 'tel':
+  switch (url.protocol) {
+    case 'http:':
+    case 'https:':
+    case 'ftp:':
+    case 'mailto:':
+    case 'tel:':
       return true;
     default:
       return false;
   }
 }
-PDFJS.isValidUrl = isValidUrl;
 
 /**
- * Adds various attributes (href, title, target, rel) to hyperlinks.
- * @param {HTMLLinkElement} link - The link element.
- * @param {Object} params - An object with the properties:
- * @param {string} params.url - An absolute URL.
+ * Attempts to create a valid absolute URL (utilizing `isValidProtocol`).
+ * @param {URL|string} url - An absolute, or relative, URL.
+ * @param {URL|string} baseUrl - An absolute URL.
+ * @returns Either a valid {URL}, or `null` otherwise.
  */
-function addLinkAttributes(link, params) {
-  var url = params && params.url;
-  link.href = link.title = (url ? removeNullCharacters(url) : '');
-
-  if (url) {
-    if (isExternalLinkTargetSet()) {
-      link.target = LinkTargetStringMap[PDFJS.externalLinkTarget];
-    }
-    // Strip referrer from the URL.
-    link.rel = PDFJS.externalLinkRel;
+function createValidAbsoluteUrl(url, baseUrl) {
+  if (!url) {
+    return null;
   }
+  try {
+    var absoluteUrl = baseUrl ? new URL(url, baseUrl) : new URL(url);
+    if (isValidProtocol(absoluteUrl)) {
+      return absoluteUrl;
+    }
+  } catch (ex) { /* `new URL()` will throw on incorrect data. */ }
+  return null;
 }
-PDFJS.addLinkAttributes = addLinkAttributes;
 
 function shadow(obj, prop, value) {
   Object.defineProperty(obj, prop, { value: value,
@@ -371,7 +375,6 @@ function shadow(obj, prop, value) {
                                      writable: false });
   return value;
 }
-PDFJS.shadow = shadow;
 
 function getLookupTableFactory(initializer) {
   var lookup;
@@ -385,50 +388,7 @@ function getLookupTableFactory(initializer) {
   };
 }
 
-var LinkTarget = PDFJS.LinkTarget = {
-  NONE: 0, // Default value.
-  SELF: 1,
-  BLANK: 2,
-  PARENT: 3,
-  TOP: 4,
-};
-var LinkTargetStringMap = [
-  '',
-  '_self',
-  '_blank',
-  '_parent',
-  '_top'
-];
-
-function isExternalLinkTargetSet() {
-//#if !MOZCENTRAL
-  if (PDFJS.openExternalLinksInNewWindow) {
-    deprecated('PDFJS.openExternalLinksInNewWindow, please use ' +
-               '"PDFJS.externalLinkTarget = PDFJS.LinkTarget.BLANK" instead.');
-    if (PDFJS.externalLinkTarget === LinkTarget.NONE) {
-      PDFJS.externalLinkTarget = LinkTarget.BLANK;
-    }
-    // Reset the deprecated parameter, to suppress further warnings.
-    PDFJS.openExternalLinksInNewWindow = false;
-  }
-//#endif
-  switch (PDFJS.externalLinkTarget) {
-    case LinkTarget.NONE:
-      return false;
-    case LinkTarget.SELF:
-    case LinkTarget.BLANK:
-    case LinkTarget.PARENT:
-    case LinkTarget.TOP:
-      return true;
-  }
-  warn('PDFJS.externalLinkTarget is invalid: ' + PDFJS.externalLinkTarget);
-  // Reset the external link target, to suppress further warnings.
-  PDFJS.externalLinkTarget = LinkTarget.NONE;
-  return false;
-}
-PDFJS.isExternalLinkTargetSet = isExternalLinkTargetSet;
-
-var PasswordResponses = PDFJS.PasswordResponses = {
+var PasswordResponses = {
   NEED_PASSWORD: 1,
   INCORRECT_PASSWORD: 2
 };
@@ -445,7 +405,6 @@ var PasswordException = (function PasswordExceptionClosure() {
 
   return PasswordException;
 })();
-PDFJS.PasswordException = PasswordException;
 
 var UnknownErrorException = (function UnknownErrorExceptionClosure() {
   function UnknownErrorException(msg, details) {
@@ -459,7 +418,6 @@ var UnknownErrorException = (function UnknownErrorExceptionClosure() {
 
   return UnknownErrorException;
 })();
-PDFJS.UnknownErrorException = UnknownErrorException;
 
 var InvalidPDFException = (function InvalidPDFExceptionClosure() {
   function InvalidPDFException(msg) {
@@ -472,7 +430,6 @@ var InvalidPDFException = (function InvalidPDFExceptionClosure() {
 
   return InvalidPDFException;
 })();
-PDFJS.InvalidPDFException = InvalidPDFException;
 
 var MissingPDFException = (function MissingPDFExceptionClosure() {
   function MissingPDFException(msg) {
@@ -485,7 +442,6 @@ var MissingPDFException = (function MissingPDFExceptionClosure() {
 
   return MissingPDFException;
 })();
-PDFJS.MissingPDFException = MissingPDFException;
 
 var UnexpectedResponseException =
     (function UnexpectedResponseExceptionClosure() {
@@ -500,7 +456,6 @@ var UnexpectedResponseException =
 
   return UnexpectedResponseException;
 })();
-PDFJS.UnexpectedResponseException = UnexpectedResponseException;
 
 var NotImplementedException = (function NotImplementedExceptionClosure() {
   function NotImplementedException(msg) {
@@ -549,7 +504,6 @@ function removeNullCharacters(str) {
   }
   return str.replace(NullCharactersRegExp, '');
 }
-PDFJS.removeNullCharacters = removeNullCharacters;
 
 function bytesToString(bytes) {
   assert(bytes !== null && typeof bytes === 'object' &&
@@ -663,78 +617,64 @@ function isLittleEndian() {
   return (buffer16[0] === 1);
 }
 
-Object.defineProperty(PDFJS, 'isLittleEndian', {
-  configurable: true,
-  get: function PDFJS_isLittleEndian() {
-    return shadow(PDFJS, 'isLittleEndian', isLittleEndian());
+// Checks if it's possible to eval JS expressions.
+function isEvalSupported() {
+  try {
+    /* jshint evil: true */
+    new Function('');
+    return true;
+  } catch (e) {
+    return false;
   }
-});
-
-//#if !(FIREFOX || MOZCENTRAL || CHROME)
-//// Lazy test if the userAgent support CanvasTypedArrays
-function hasCanvasTypedArrays() {
-  var canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 1;
-  var ctx = canvas.getContext('2d');
-  var imageData = ctx.createImageData(1, 1);
-  return (typeof imageData.data.buffer !== 'undefined');
 }
 
-Object.defineProperty(PDFJS, 'hasCanvasTypedArrays', {
-  configurable: true,
-  get: function PDFJS_hasCanvasTypedArrays() {
-    return shadow(PDFJS, 'hasCanvasTypedArrays', hasCanvasTypedArrays());
-  }
-});
-
-var Uint32ArrayView = (function Uint32ArrayViewClosure() {
-
-  function Uint32ArrayView(buffer, length) {
-    this.buffer = buffer;
-    this.byteLength = buffer.length;
-    this.length = length === undefined ? (this.byteLength >> 2) : length;
-    ensureUint32ArrayViewProps(this.length);
-  }
-  Uint32ArrayView.prototype = Object.create(null);
-
-  var uint32ArrayViewSetters = 0;
-  function createUint32ArrayProp(index) {
-    return {
-      get: function () {
-        var buffer = this.buffer, offset = index << 2;
-        return (buffer[offset] | (buffer[offset + 1] << 8) |
-          (buffer[offset + 2] << 16) | (buffer[offset + 3] << 24)) >>> 0;
-      },
-      set: function (value) {
-        var buffer = this.buffer, offset = index << 2;
-        buffer[offset] = value & 255;
-        buffer[offset + 1] = (value >> 8) & 255;
-        buffer[offset + 2] = (value >> 16) & 255;
-        buffer[offset + 3] = (value >>> 24) & 255;
-      }
-    };
-  }
-
-  function ensureUint32ArrayViewProps(length) {
-    while (uint32ArrayViewSetters < length) {
-      Object.defineProperty(Uint32ArrayView.prototype,
-        uint32ArrayViewSetters,
-        createUint32ArrayProp(uint32ArrayViewSetters));
-      uint32ArrayViewSetters++;
+if (typeof PDFJSDev === 'undefined' ||
+    !PDFJSDev.test('FIREFOX || MOZCENTRAL || CHROME')) {
+  var Uint32ArrayView = (function Uint32ArrayViewClosure() {
+    function Uint32ArrayView(buffer, length) {
+      this.buffer = buffer;
+      this.byteLength = buffer.length;
+      this.length = length === undefined ? (this.byteLength >> 2) : length;
+      ensureUint32ArrayViewProps(this.length);
     }
-  }
+    Uint32ArrayView.prototype = Object.create(null);
 
-  return Uint32ArrayView;
-})();
+    var uint32ArrayViewSetters = 0;
+    function createUint32ArrayProp(index) {
+      return {
+        get: function () {
+          var buffer = this.buffer, offset = index << 2;
+          return (buffer[offset] | (buffer[offset + 1] << 8) |
+            (buffer[offset + 2] << 16) | (buffer[offset + 3] << 24)) >>> 0;
+        },
+        set: function (value) {
+          var buffer = this.buffer, offset = index << 2;
+          buffer[offset] = value & 255;
+          buffer[offset + 1] = (value >> 8) & 255;
+          buffer[offset + 2] = (value >> 16) & 255;
+          buffer[offset + 3] = (value >>> 24) & 255;
+        }
+      };
+    }
 
-exports.Uint32ArrayView = Uint32ArrayView;
-//#else
-//PDFJS.hasCanvasTypedArrays = true;
-//#endif
+    function ensureUint32ArrayViewProps(length) {
+      while (uint32ArrayViewSetters < length) {
+        Object.defineProperty(Uint32ArrayView.prototype,
+          uint32ArrayViewSetters,
+          createUint32ArrayProp(uint32ArrayViewSetters));
+        uint32ArrayViewSetters++;
+      }
+    }
+
+    return Uint32ArrayView;
+  })();
+
+  exports.Uint32ArrayView = Uint32ArrayView;
+}
 
 var IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
 
-var Util = PDFJS.Util = (function UtilClosure() {
+var Util = (function UtilClosure() {
   function Util() {}
 
   var rgbBuf = ['rgb(', 0, ',', 0, ',', 0, ')'];
@@ -945,15 +885,15 @@ var Util = PDFJS.Util = (function UtilClosure() {
     }
   };
 
-  Util.getInheritableProperty = function Util_getInheritableProperty(dict,
-                                                                     name) {
+  Util.getInheritableProperty =
+      function Util_getInheritableProperty(dict, name, getArray) {
     while (dict && !dict.has(name)) {
       dict = dict.get('Parent');
     }
     if (!dict) {
       return null;
     }
-    return dict.get(name);
+    return getArray ? dict.getArray(name) : dict.get(name);
   };
 
   Util.inherit = function Util_inherit(sub, base, prototype) {
@@ -985,9 +925,9 @@ var Util = PDFJS.Util = (function UtilClosure() {
 /**
  * PDF page viewport created based on scale, rotation and offset.
  * @class
- * @alias PDFJS.PageViewport
+ * @alias PageViewport
  */
-var PageViewport = PDFJS.PageViewport = (function PageViewportClosure() {
+var PageViewport = (function PageViewportClosure() {
   /**
    * @constructor
    * @private
@@ -1061,13 +1001,13 @@ var PageViewport = PDFJS.PageViewport = (function PageViewportClosure() {
     this.height = height;
     this.fontScale = scale;
   }
-  PageViewport.prototype = /** @lends PDFJS.PageViewport.prototype */ {
+  PageViewport.prototype = /** @lends PageViewport.prototype */ {
     /**
      * Clones viewport with additional properties.
      * @param args {Object} (optional) If specified, may contain the 'scale' or
      * 'rotation' properties to override the corresponding properties in
      * the cloned viewport.
-     * @returns {PDFJS.PageViewport} Cloned viewport.
+     * @returns {PageViewport} Cloned viewport.
      */
     clone: function PageViewPort_clone(args) {
       args = args || {};
@@ -1186,18 +1126,23 @@ function isArrayBuffer(v) {
   return typeof v === 'object' && v !== null && v.byteLength !== undefined;
 }
 
+// Checks if ch is one of the following characters: SPACE, TAB, CR or LF.
+function isSpace(ch) {
+  return (ch === 0x20 || ch === 0x09 || ch === 0x0D || ch === 0x0A);
+}
+
 /**
  * Promise Capability object.
  *
  * @typedef {Object} PromiseCapability
  * @property {Promise} promise - A promise object.
- * @property {function} resolve - Fullfills the promise.
+ * @property {function} resolve - Fulfills the promise.
  * @property {function} reject - Rejects the promise.
  */
 
 /**
  * Creates a promise capability object.
- * @alias PDFJS.createPromiseCapability
+ * @alias createPromiseCapability
  *
  * @return {PromiseCapability} A capability object contains:
  * - a Promise, resolve and reject methods.
@@ -1211,13 +1156,11 @@ function createPromiseCapability() {
   return capability;
 }
 
-PDFJS.createPromiseCapability = createPromiseCapability;
-
 /**
  * Polyfill for Promises:
  * The following promise implementation tries to generally implement the
- * Promise/A+ spec. Some notable differences from other promise libaries are:
- * - There currently isn't a seperate deferred and promise object.
+ * Promise/A+ spec. Some notable differences from other promise libraries are:
+ * - There currently isn't a separate deferred and promise object.
  * - Unhandled rejections eventually show an error if they aren't handled.
  *
  * Based off of the work in:
@@ -1268,7 +1211,8 @@ PDFJS.createPromiseCapability = createPromiseCapability;
     }
     return;
   }
-//#if !MOZCENTRAL
+
+if (typeof PDFJSDev === 'undefined' || !PDFJSDev.test('MOZCENTRAL')) {
   var STATUS_PENDING = 0;
   var STATUS_RESOLVED = 1;
   var STATUS_REJECTED = 2;
@@ -1386,7 +1330,7 @@ PDFJS.createPromiseCapability = createPromiseCapability;
     }
   };
 
-  function Promise(resolver) {
+  var Promise = function Promise(resolver) {
     this._status = STATUS_PENDING;
     this._handlers = [];
     try {
@@ -1394,12 +1338,13 @@ PDFJS.createPromiseCapability = createPromiseCapability;
     } catch (e) {
       this._reject(e);
     }
-  }
+  };
+
   /**
    * Builds a promise that is resolved when all the passed in promises are
    * resolved.
-   * @param {array} array of data and/or promises to wait for.
-   * @return {Promise} New dependant promise.
+   * @param {array} promises array of data and/or promises to wait for.
+   * @return {Promise} New dependent promise.
    */
   Promise.all = function Promise_all(promises) {
     var resolveAll, rejectAll;
@@ -1528,10 +1473,44 @@ PDFJS.createPromiseCapability = createPromiseCapability;
   };
 
   globalScope.Promise = Promise;
-//#else
-//throw new Error('DOM Promise is not present');
-//#endif
+} else {
+  throw new Error('DOM Promise is not present');
+}
+
 })();
+
+if (typeof PDFJSDev === 'undefined' || !PDFJSDev.test('MOZCENTRAL')) {
+  (function WeakMapClosure() {
+    if (globalScope.WeakMap) {
+      return;
+    }
+
+    var id = 0;
+    function WeakMap() {
+      this.id = '$weakmap' + (id++);
+    }
+    WeakMap.prototype = {
+      has: function(obj) {
+        return !!Object.getOwnPropertyDescriptor(obj, this.id);
+      },
+      get: function(obj, defaultValue) {
+        return this.has(obj) ? obj[this.id] : defaultValue;
+      },
+      set: function(obj, value) {
+        Object.defineProperty(obj, this.id, {
+          value: value,
+          enumerable: false,
+          configurable: true
+        });
+      },
+      delete: function(obj) {
+        delete obj[this.id];
+      }
+    };
+
+    globalScope.WeakMap = WeakMap;
+  })();
+}
 
 var StatTimer = (function StatTimerClosure() {
   function rpad(str, pad, length) {
@@ -1593,25 +1572,22 @@ var StatTimer = (function StatTimerClosure() {
   return StatTimer;
 })();
 
-PDFJS.createBlob = function createBlob(data, contentType) {
+var createBlob = function createBlob(data, contentType) {
   if (typeof Blob !== 'undefined') {
     return new Blob([data], { type: contentType });
   }
-  // Blob builder is deprecated in FF14 and removed in FF18.
-  var bb = new MozBlobBuilder();
-  bb.append(data);
-  return bb.getBlob(contentType);
+  warn('The "Blob" constructor is not supported.');
 };
 
-PDFJS.createObjectURL = (function createObjectURLClosure() {
+var createObjectURL = (function createObjectURLClosure() {
   // Blob/createObjectURL is not available, falling back to data schema.
   var digits =
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
 
-  return function createObjectURL(data, contentType) {
-    if (!PDFJS.disableCreateObjectURL &&
+  return function createObjectURL(data, contentType, forceDataSchema) {
+    if (!forceDataSchema &&
         typeof URL !== 'undefined' && URL.createObjectURL) {
-      var blob = PDFJS.createBlob(data, contentType);
+      var blob = createBlob(data, contentType);
       return URL.createObjectURL(blob);
     }
 
@@ -1775,13 +1751,11 @@ function loadJpegStream(id, imageUrl, objs) {
   img.src = imageUrl;
 }
 
-//#if !(MOZCENTRAL)
-//// Polyfill from https://github.com/Polymer/URL
+if (typeof PDFJSDev === 'undefined' || !PDFJSDev.test('MOZCENTRAL')) {
+// Polyfill from https://github.com/Polymer/URL
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 (function checkURLConstructor(scope) {
-  /* jshint ignore:start */
-
   // feature detect for URL constructor
   var hasWorkingUrl = false;
   try {
@@ -1794,8 +1768,9 @@ function loadJpegStream(id, imageUrl, objs) {
     }
   } catch(e) { }
 
-  if (hasWorkingUrl)
+  if (hasWorkingUrl) {
     return;
+  }
 
   var relative = Object.create(null);
   relative['ftp'] = 21;
@@ -1822,11 +1797,11 @@ function loadJpegStream(id, imageUrl, objs) {
   }
 
   function IDNAToASCII(h) {
-    if ('' == h) {
-      invalid.call(this)
+    if ('' === h) {
+      invalid.call(this);
     }
     // XXX
-    return h.toLowerCase()
+    return h.toLowerCase();
   }
 
   function percentEscape(c) {
@@ -1834,7 +1809,7 @@ function loadJpegStream(id, imageUrl, objs) {
     if (unicode > 0x20 &&
        unicode < 0x7F &&
        // " # < > ? `
-       [0x22, 0x23, 0x3C, 0x3E, 0x3F, 0x60].indexOf(unicode) == -1
+       [0x22, 0x23, 0x3C, 0x3E, 0x3F, 0x60].indexOf(unicode) === -1
       ) {
       return c;
     }
@@ -1849,20 +1824,19 @@ function loadJpegStream(id, imageUrl, objs) {
     if (unicode > 0x20 &&
        unicode < 0x7F &&
        // " # < > ` (do not escape '?')
-       [0x22, 0x23, 0x3C, 0x3E, 0x60].indexOf(unicode) == -1
+       [0x22, 0x23, 0x3C, 0x3E, 0x60].indexOf(unicode) === -1
       ) {
       return c;
     }
     return encodeURIComponent(c);
   }
 
-  var EOF = undefined,
-      ALPHA = /[a-zA-Z]/,
+  var EOF, ALPHA = /[a-zA-Z]/,
       ALPHANUMERIC = /[a-zA-Z0-9\+\-\.]/;
 
   function parse(input, stateOverride, base) {
     function err(message) {
-      errors.push(message)
+      errors.push(message);
     }
 
     var state = stateOverride || 'scheme start',
@@ -1872,7 +1846,8 @@ function loadJpegStream(id, imageUrl, objs) {
         seenBracket = false,
         errors = [];
 
-    loop: while ((input[cursor - 1] != EOF || cursor == 0) && !this._isInvalid) {
+    loop: while ((input[cursor - 1] !== EOF || cursor === 0) &&
+                 !this._isInvalid) {
       var c = input[cursor];
       switch (state) {
         case 'scheme start':
@@ -1892,7 +1867,7 @@ function loadJpegStream(id, imageUrl, objs) {
         case 'scheme':
           if (c && ALPHANUMERIC.test(c)) {
             buffer += c.toLowerCase(); // ASCII-safe
-          } else if (':' == c) {
+          } else if (':' === c) {
             this._scheme = buffer;
             buffer = '';
             if (stateOverride) {
@@ -1901,9 +1876,10 @@ function loadJpegStream(id, imageUrl, objs) {
             if (isRelativeScheme(this._scheme)) {
               this._isRelative = true;
             }
-            if ('file' == this._scheme) {
+            if ('file' === this._scheme) {
               state = 'relative';
-            } else if (this._isRelative && base && base._scheme == this._scheme) {
+            } else if (this._isRelative && base &&
+                       base._scheme === this._scheme) {
               state = 'relative or authority';
             } else if (this._isRelative) {
               state = 'authority first slash';
@@ -1915,24 +1891,24 @@ function loadJpegStream(id, imageUrl, objs) {
             cursor = 0;
             state = 'no scheme';
             continue;
-          } else if (EOF == c) {
+          } else if (EOF === c) {
             break loop;
           } else {
-            err('Code point not allowed in scheme: ' + c)
+            err('Code point not allowed in scheme: ' + c);
             break loop;
           }
           break;
 
         case 'scheme data':
-          if ('?' == c) {
+          if ('?' === c) {
             this._query = '?';
             state = 'query';
-          } else if ('#' == c) {
+          } else if ('#' === c) {
             this._fragment = '#';
             state = 'fragment';
           } else {
             // XXX error handling
-            if (EOF != c && '\t' != c && '\n' != c && '\r' != c) {
+            if (EOF !== c && '\t' !== c && '\n' !== c && '\r' !== c) {
               this._schemeData += percentEscape(c);
             }
           }
@@ -1949,20 +1925,21 @@ function loadJpegStream(id, imageUrl, objs) {
           break;
 
         case 'relative or authority':
-          if ('/' == c && '/' == input[cursor+1]) {
+          if ('/' === c && '/' === input[cursor+1]) {
             state = 'authority ignore slashes';
           } else {
             err('Expected /, got: ' + c);
             state = 'relative';
-            continue
+            continue;
           }
           break;
 
         case 'relative':
           this._isRelative = true;
-          if ('file' != this._scheme)
+          if ('file' !== this._scheme) {
             this._scheme = base._scheme;
-          if (EOF == c) {
+          }
+          if (EOF === c) {
             this._host = base._host;
             this._port = base._port;
             this._path = base._path.slice();
@@ -1970,11 +1947,12 @@ function loadJpegStream(id, imageUrl, objs) {
             this._username = base._username;
             this._password = base._password;
             break loop;
-          } else if ('/' == c || '\\' == c) {
-            if ('\\' == c)
+          } else if ('/' === c || '\\' === c) {
+            if ('\\' === c) {
               err('\\ is an invalid code point.');
+            }
             state = 'relative slash';
-          } else if ('?' == c) {
+          } else if ('?' === c) {
             this._host = base._host;
             this._port = base._port;
             this._path = base._path.slice();
@@ -1982,7 +1960,7 @@ function loadJpegStream(id, imageUrl, objs) {
             this._username = base._username;
             this._password = base._password;
             state = 'query';
-          } else if ('#' == c) {
+          } else if ('#' === c) {
             this._host = base._host;
             this._port = base._port;
             this._path = base._path.slice();
@@ -1992,12 +1970,12 @@ function loadJpegStream(id, imageUrl, objs) {
             this._password = base._password;
             state = 'fragment';
           } else {
-            var nextC = input[cursor+1]
-            var nextNextC = input[cursor+2]
-            if (
-              'file' != this._scheme || !ALPHA.test(c) ||
-              (nextC != ':' && nextC != '|') ||
-              (EOF != nextNextC && '/' != nextNextC && '\\' != nextNextC && '?' != nextNextC && '#' != nextNextC)) {
+            var nextC = input[cursor+1];
+            var nextNextC = input[cursor+2];
+            if ('file' !== this._scheme || !ALPHA.test(c) ||
+                (nextC !== ':' && nextC !== '|') ||
+                (EOF !== nextNextC && '/' !== nextNextC && '\\' !== nextNextC &&
+                '?' !== nextNextC && '#' !== nextNextC)) {
               this._host = base._host;
               this._port = base._port;
               this._username = base._username;
@@ -2011,17 +1989,17 @@ function loadJpegStream(id, imageUrl, objs) {
           break;
 
         case 'relative slash':
-          if ('/' == c || '\\' == c) {
-            if ('\\' == c) {
+          if ('/' === c || '\\' === c) {
+            if ('\\' === c) {
               err('\\ is an invalid code point.');
             }
-            if ('file' == this._scheme) {
+            if ('file' === this._scheme) {
               state = 'file host';
             } else {
               state = 'authority ignore slashes';
             }
           } else {
-            if ('file' != this._scheme) {
+            if ('file' !== this._scheme) {
               this._host = base._host;
               this._port = base._port;
               this._username = base._username;
@@ -2033,10 +2011,10 @@ function loadJpegStream(id, imageUrl, objs) {
           break;
 
         case 'authority first slash':
-          if ('/' == c) {
+          if ('/' === c) {
             state = 'authority second slash';
           } else {
-            err("Expected '/', got: " + c);
+            err('Expected \'/\', got: ' + c);
             state = 'authority ignore slashes';
             continue;
           }
@@ -2044,14 +2022,14 @@ function loadJpegStream(id, imageUrl, objs) {
 
         case 'authority second slash':
           state = 'authority ignore slashes';
-          if ('/' != c) {
-            err("Expected '/', got: " + c);
+          if ('/' !== c) {
+            err('Expected \'/\', got: ' + c);
             continue;
           }
           break;
 
         case 'authority ignore slashes':
-          if ('/' != c && '\\' != c) {
+          if ('/' !== c && '\\' !== c) {
             state = 'authority';
             continue;
           } else {
@@ -2060,7 +2038,7 @@ function loadJpegStream(id, imageUrl, objs) {
           break;
 
         case 'authority':
-          if ('@' == c) {
+          if ('@' === c) {
             if (seenAt) {
               err('@ already seen.');
               buffer += '%40';
@@ -2068,20 +2046,25 @@ function loadJpegStream(id, imageUrl, objs) {
             seenAt = true;
             for (var i = 0; i < buffer.length; i++) {
               var cp = buffer[i];
-              if ('\t' == cp || '\n' == cp || '\r' == cp) {
+              if ('\t' === cp || '\n' === cp || '\r' === cp) {
                 err('Invalid whitespace in authority.');
                 continue;
               }
               // XXX check URL code points
-              if (':' == cp && null === this._password) {
+              if (':' === cp && null === this._password) {
                 this._password = '';
                 continue;
               }
               var tempC = percentEscape(cp);
-              (null !== this._password) ? this._password += tempC : this._username += tempC;
+              if (null !== this._password) {
+                this._password += tempC;
+              } else {
+                this._username += tempC;
+              }
             }
             buffer = '';
-          } else if (EOF == c || '/' == c || '\\' == c || '?' == c || '#' == c) {
+          } else if (EOF === c || '/' === c || '\\' === c ||
+                     '?' === c || '#' === c) {
             cursor -= buffer.length;
             buffer = '';
             state = 'host';
@@ -2092,10 +2075,11 @@ function loadJpegStream(id, imageUrl, objs) {
           break;
 
         case 'file host':
-          if (EOF == c || '/' == c || '\\' == c || '?' == c || '#' == c) {
-            if (buffer.length == 2 && ALPHA.test(buffer[0]) && (buffer[1] == ':' || buffer[1] == '|')) {
+          if (EOF === c || '/' === c || '\\' === c || '?' === c || '#' === c) {
+            if (buffer.length === 2 && ALPHA.test(buffer[0]) &&
+                (buffer[1] === ':' || buffer[1] === '|')) {
               state = 'relative path';
-            } else if (buffer.length == 0) {
+            } else if (buffer.length === 0) {
               state = 'relative path start';
             } else {
               this._host = IDNAToASCII.call(this, buffer);
@@ -2103,7 +2087,7 @@ function loadJpegStream(id, imageUrl, objs) {
               state = 'relative path start';
             }
             continue;
-          } else if ('\t' == c || '\n' == c || '\r' == c) {
+          } else if ('\t' === c || '\n' === c || '\r' === c) {
             err('Invalid whitespace in file host.');
           } else {
             buffer += c;
@@ -2112,15 +2096,16 @@ function loadJpegStream(id, imageUrl, objs) {
 
         case 'host':
         case 'hostname':
-          if (':' == c && !seenBracket) {
+          if (':' === c && !seenBracket) {
             // XXX host parsing
             this._host = IDNAToASCII.call(this, buffer);
             buffer = '';
             state = 'port';
-            if ('hostname' == stateOverride) {
+            if ('hostname' === stateOverride) {
               break loop;
             }
-          } else if (EOF == c || '/' == c || '\\' == c || '?' == c || '#' == c) {
+          } else if (EOF === c || '/' === c ||
+                     '\\' === c || '?' === c || '#' === c) {
             this._host = IDNAToASCII.call(this, buffer);
             buffer = '';
             state = 'relative path start';
@@ -2128,10 +2113,10 @@ function loadJpegStream(id, imageUrl, objs) {
               break loop;
             }
             continue;
-          } else if ('\t' != c && '\n' != c && '\r' != c) {
-            if ('[' == c) {
+          } else if ('\t' !== c && '\n' !== c && '\r' !== c) {
+            if ('[' === c) {
               seenBracket = true;
-            } else if (']' == c) {
+            } else if (']' === c) {
               seenBracket = false;
             }
             buffer += c;
@@ -2143,10 +2128,11 @@ function loadJpegStream(id, imageUrl, objs) {
         case 'port':
           if (/[0-9]/.test(c)) {
             buffer += c;
-          } else if (EOF == c || '/' == c || '\\' == c || '?' == c || '#' == c || stateOverride) {
-            if ('' != buffer) {
+          } else if (EOF === c || '/' === c || '\\' === c ||
+                     '?' === c || '#' === c || stateOverride) {
+            if ('' !== buffer) {
               var temp = parseInt(buffer, 10);
-              if (temp != relative[this._scheme]) {
+              if (temp !== relative[this._scheme]) {
                 this._port = temp + '';
               }
               buffer = '';
@@ -2156,7 +2142,7 @@ function loadJpegStream(id, imageUrl, objs) {
             }
             state = 'relative path start';
             continue;
-          } else if ('\t' == c || '\n' == c || '\r' == c) {
+          } else if ('\t' === c || '\n' === c || '\r' === c) {
             err('Invalid code point in port: ' + c);
           } else {
             invalid.call(this);
@@ -2164,60 +2150,64 @@ function loadJpegStream(id, imageUrl, objs) {
           break;
 
         case 'relative path start':
-          if ('\\' == c)
-            err("'\\' not allowed in path.");
+          if ('\\' === c) {
+            err('\'\\\' not allowed in path.');
+          }
           state = 'relative path';
-          if ('/' != c && '\\' != c) {
+          if ('/' !== c && '\\' !== c) {
             continue;
           }
           break;
 
         case 'relative path':
-          if (EOF == c || '/' == c || '\\' == c || (!stateOverride && ('?' == c || '#' == c))) {
-            if ('\\' == c) {
+          if (EOF === c || '/' === c || '\\' === c ||
+              (!stateOverride && ('?' === c || '#' === c))) {
+            if ('\\' === c) {
               err('\\ not allowed in relative path.');
             }
             var tmp;
             if (tmp = relativePathDotMapping[buffer.toLowerCase()]) {
               buffer = tmp;
             }
-            if ('..' == buffer) {
+            if ('..' === buffer) {
               this._path.pop();
-              if ('/' != c && '\\' != c) {
+              if ('/' !== c && '\\' !== c) {
                 this._path.push('');
               }
-            } else if ('.' == buffer && '/' != c && '\\' != c) {
+            } else if ('.' === buffer && '/' !== c && '\\' !== c) {
               this._path.push('');
-            } else if ('.' != buffer) {
-              if ('file' == this._scheme && this._path.length == 0 && buffer.length == 2 && ALPHA.test(buffer[0]) && buffer[1] == '|') {
+            } else if ('.' !== buffer) {
+              if ('file' === this._scheme && this._path.length === 0 &&
+                  buffer.length === 2 && ALPHA.test(buffer[0]) &&
+                  buffer[1] === '|') {
                 buffer = buffer[0] + ':';
               }
               this._path.push(buffer);
             }
             buffer = '';
-            if ('?' == c) {
+            if ('?' === c) {
               this._query = '?';
               state = 'query';
-            } else if ('#' == c) {
+            } else if ('#' === c) {
               this._fragment = '#';
               state = 'fragment';
             }
-          } else if ('\t' != c && '\n' != c && '\r' != c) {
+          } else if ('\t' !== c && '\n' !== c && '\r' !== c) {
             buffer += percentEscape(c);
           }
           break;
 
         case 'query':
-          if (!stateOverride && '#' == c) {
+          if (!stateOverride && '#' === c) {
             this._fragment = '#';
             state = 'fragment';
-          } else if (EOF != c && '\t' != c && '\n' != c && '\r' != c) {
+          } else if (EOF !== c && '\t' !== c && '\n' !== c && '\r' !== c) {
             this._query += percentEscapeQuery(c);
           }
           break;
 
         case 'fragment':
-          if (EOF != c && '\t' != c && '\n' != c && '\r' != c) {
+          if (EOF !== c && '\t' !== c && '\n' !== c && '\r' !== c) {
             this._fragment += c;
           }
           break;
@@ -2243,9 +2233,10 @@ function loadJpegStream(id, imageUrl, objs) {
 
   // Does not process domain names or IP addresses.
   // Does not handle encoding for the query parameter.
-  function jURL(url, base /* , encoding */) {
-    if (base !== undefined && !(base instanceof jURL))
-      base = new jURL(String(base));
+  function JURL(url, base /* , encoding */) {
+    if (base !== undefined && !(base instanceof JURL)) {
+      base = new JURL(String(base));
+    }
 
     this._url = url;
     clear.call(this);
@@ -2256,18 +2247,18 @@ function loadJpegStream(id, imageUrl, objs) {
     parse.call(this, input, null, base);
   }
 
-  jURL.prototype = {
+  JURL.prototype = {
     toString: function() {
       return this.href;
     },
     get href() {
-      if (this._isInvalid)
+      if (this._isInvalid) {
         return this._url;
-
+      }
       var authority = '';
-      if ('' != this._username || null != this._password) {
+      if ('' !== this._username || null !== this._password) {
         authority = this._username +
-            (null != this._password ? ':' + this._password : '') + '@';
+            (null !== this._password ? ':' + this._password : '') + '@';
       }
 
       return this.protocol +
@@ -2283,8 +2274,9 @@ function loadJpegStream(id, imageUrl, objs) {
       return this._scheme + ':';
     },
     set protocol(protocol) {
-      if (this._isInvalid)
+      if (this._isInvalid) {
         return;
+      }
       parse.call(this, protocol + ':', 'scheme start');
     },
 
@@ -2293,8 +2285,9 @@ function loadJpegStream(id, imageUrl, objs) {
           this._host + ':' + this._port : this._host;
     },
     set host(host) {
-      if (this._isInvalid || !this._isRelative)
+      if (this._isInvalid || !this._isRelative) {
         return;
+      }
       parse.call(this, host, 'host');
     },
 
@@ -2302,8 +2295,9 @@ function loadJpegStream(id, imageUrl, objs) {
       return this._host;
     },
     set hostname(hostname) {
-      if (this._isInvalid || !this._isRelative)
+      if (this._isInvalid || !this._isRelative) {
         return;
+      }
       parse.call(this, hostname, 'hostname');
     },
 
@@ -2311,8 +2305,9 @@ function loadJpegStream(id, imageUrl, objs) {
       return this._port;
     },
     set port(port) {
-      if (this._isInvalid || !this._isRelative)
+      if (this._isInvalid || !this._isRelative) {
         return;
+      }
       parse.call(this, port, 'port');
     },
 
@@ -2321,35 +2316,40 @@ function loadJpegStream(id, imageUrl, objs) {
           '/' + this._path.join('/') : this._schemeData;
     },
     set pathname(pathname) {
-      if (this._isInvalid || !this._isRelative)
+      if (this._isInvalid || !this._isRelative) {
         return;
+      }
       this._path = [];
       parse.call(this, pathname, 'relative path start');
     },
 
     get search() {
-      return this._isInvalid || !this._query || '?' == this._query ?
+      return this._isInvalid || !this._query || '?' === this._query ?
           '' : this._query;
     },
     set search(search) {
-      if (this._isInvalid || !this._isRelative)
+      if (this._isInvalid || !this._isRelative) {
         return;
+      }
       this._query = '?';
-      if ('?' == search[0])
+      if ('?' === search[0]) {
         search = search.slice(1);
+      }
       parse.call(this, search, 'query');
     },
 
     get hash() {
-      return this._isInvalid || !this._fragment || '#' == this._fragment ?
+      return this._isInvalid || !this._fragment || '#' === this._fragment ?
           '' : this._fragment;
     },
     set hash(hash) {
-      if (this._isInvalid)
+      if (this._isInvalid) {
         return;
+      }
       this._fragment = '#';
-      if ('#' == hash[0])
+      if ('#' === hash[0]) {
         hash = hash.slice(1);
+      }
       parse.call(this, hash, 'fragment');
     },
 
@@ -2381,37 +2381,37 @@ function loadJpegStream(id, imageUrl, objs) {
   // Copy over the static methods
   var OriginalURL = scope.URL;
   if (OriginalURL) {
-    jURL.createObjectURL = function(blob) {
+    JURL.createObjectURL = function(blob) {
       // IE extension allows a second optional options argument.
       // http://msdn.microsoft.com/en-us/library/ie/hh772302(v=vs.85).aspx
       return OriginalURL.createObjectURL.apply(OriginalURL, arguments);
     };
-    jURL.revokeObjectURL = function(url) {
+    JURL.revokeObjectURL = function(url) {
       OriginalURL.revokeObjectURL(url);
     };
   }
 
-  scope.URL = jURL;
-  /* jshint ignore:end */
+  scope.URL = JURL;
 })(globalScope);
-//#endif
+}
 
 exports.FONT_IDENTITY_MATRIX = FONT_IDENTITY_MATRIX;
 exports.IDENTITY_MATRIX = IDENTITY_MATRIX;
 exports.OPS = OPS;
+exports.VERBOSITY_LEVELS = VERBOSITY_LEVELS;
 exports.UNSUPPORTED_FEATURES = UNSUPPORTED_FEATURES;
 exports.AnnotationBorderStyleType = AnnotationBorderStyleType;
+exports.AnnotationFieldFlag = AnnotationFieldFlag;
 exports.AnnotationFlag = AnnotationFlag;
 exports.AnnotationType = AnnotationType;
 exports.FontType = FontType;
 exports.ImageKind = ImageKind;
 exports.InvalidPDFException = InvalidPDFException;
-exports.LinkTarget = LinkTarget;
-exports.LinkTargetStringMap = LinkTargetStringMap;
 exports.MessageHandler = MessageHandler;
 exports.MissingDataException = MissingDataException;
 exports.MissingPDFException = MissingPDFException;
 exports.NotImplementedException = NotImplementedException;
+exports.PageViewport = PageViewport;
 exports.PasswordException = PasswordException;
 exports.PasswordResponses = PasswordResponses;
 exports.StatTimer = StatTimer;
@@ -2425,30 +2425,34 @@ exports.arrayByteLength = arrayByteLength;
 exports.arraysToBytes = arraysToBytes;
 exports.assert = assert;
 exports.bytesToString = bytesToString;
-exports.combineUrl = combineUrl;
+exports.createBlob = createBlob;
 exports.createPromiseCapability = createPromiseCapability;
+exports.createObjectURL = createObjectURL;
 exports.deprecated = deprecated;
 exports.error = error;
-exports.getFilenameFromUrl = getFilenameFromUrl;
 exports.getLookupTableFactory = getLookupTableFactory;
+exports.getVerbosityLevel = getVerbosityLevel;
+exports.globalScope = globalScope;
 exports.info = info;
 exports.isArray = isArray;
 exports.isArrayBuffer = isArrayBuffer;
 exports.isBool = isBool;
 exports.isEmptyObj = isEmptyObj;
-exports.isExternalLinkTargetSet = isExternalLinkTargetSet;
 exports.isInt = isInt;
 exports.isNum = isNum;
 exports.isString = isString;
+exports.isSpace = isSpace;
 exports.isSameOrigin = isSameOrigin;
-exports.isValidUrl = isValidUrl;
-exports.addLinkAttributes = addLinkAttributes;
+exports.createValidAbsoluteUrl = createValidAbsoluteUrl;
+exports.isLittleEndian = isLittleEndian;
+exports.isEvalSupported = isEvalSupported;
 exports.loadJpegStream = loadJpegStream;
 exports.log2 = log2;
 exports.readInt8 = readInt8;
 exports.readUint16 = readUint16;
 exports.readUint32 = readUint32;
 exports.removeNullCharacters = removeNullCharacters;
+exports.setVerbosityLevel = setVerbosityLevel;
 exports.shadow = shadow;
 exports.string32 = string32;
 exports.stringToBytes = stringToBytes;

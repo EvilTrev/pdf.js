@@ -1,0 +1,19 @@
+{
+  "showPreviousViewOnLoad": true,
+  "defaultZoomValue": "",
+  "sidebarViewOnLoad": 0,
+  "enableHandToolOnLoad": false,
+  "enableWebGL": false,
+  "pdfBugEnabled": false,
+  "disableRange": false,
+  "disableStream": false,
+  "disableAutoFetch": false,
+  "disableFontFace": false,
+  "disableTextLayer": false,
+  "useOnlyCssZoom": false,
+  "externalLinkTarget": 0,
+  "enhanceTextSelection": false,
+  "renderer": "canvas",
+  "renderInteractiveForms": false,
+  "disablePageLabels": false
+}

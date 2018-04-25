@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals PDFJS, Document */
+/* globals Document */
 
 'use strict';
 
@@ -28,7 +28,6 @@
 
 var error = sharedUtil.error;
 
-var Metadata = PDFJS.Metadata = (function MetadataClosure() {
   function fixMetadata(meta) {
     return meta.replace(/>\\376\\377([^<]+)/g, function(all, codes) {
       var bytes = codes.replace(/\\([0-3])([0-7])([0-7])/g,
@@ -104,9 +103,6 @@ var Metadata = PDFJS.Metadata = (function MetadataClosure() {
       return typeof this.metadata[name] !== 'undefined';
     }
   };
-
-  return Metadata;
-})();
 
 exports.Metadata = Metadata;
 }));

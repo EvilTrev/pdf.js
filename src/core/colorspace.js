@@ -18,17 +18,16 @@
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
     define('pdfjs/core/colorspace', ['exports', 'pdfjs/shared/util',
-      'pdfjs/core/primitives', 'pdfjs/core/function', 'pdfjs/core/stream'],
+      'pdfjs/core/primitives', 'pdfjs/core/function'],
       factory);
   } else if (typeof exports !== 'undefined') {
     factory(exports, require('../shared/util.js'), require('./primitives.js'),
-      require('./function.js'), require('./stream.js'));
+      require('./function.js'));
   } else {
     factory((root.pdfjsCoreColorSpace = {}), root.pdfjsSharedUtil,
-      root.pdfjsCorePrimitives, root.pdfjsCoreFunction, root.pdfjsCoreStream);
+      root.pdfjsCorePrimitives, root.pdfjsCoreFunction);
   }
-}(this, function (exports, sharedUtil, corePrimitives, coreFunction,
-                  coreStream) {
+}(this, function (exports, sharedUtil, corePrimitives, coreFunction) {
 
 var error = sharedUtil.error;
 var info = sharedUtil.info;
@@ -41,10 +40,42 @@ var isName = corePrimitives.isName;
 var isStream = corePrimitives.isStream;
 var PDFFunction = coreFunction.PDFFunction;
 
-var coreImage; // see _setCoreImage below
-var PDFImage; // = coreImage.PDFImage;
-
 var ColorSpace = (function ColorSpaceClosure() {
+  /**
+   * Resizes an RGB image with 3 components.
+   * @param {TypedArray} src - The source buffer.
+   * @param {Number} bpc - Number of bits per component.
+   * @param {Number} w1 - Original width.
+   * @param {Number} h1 - Original height.
+   * @param {Number} w2 - New width.
+   * @param {Number} h2 - New height.
+   * @param {Number} alpha01 - Size reserved for the alpha channel.
+   * @param {TypedArray} dest - The destination buffer.
+   */
+  function resizeRgbImage(src, bpc, w1, h1, w2, h2, alpha01, dest) {
+    var COMPONENTS = 3;
+    alpha01 = alpha01 !== 1 ? 0 : alpha01;
+    var xRatio = w1 / w2;
+    var yRatio = h1 / h2;
+    var i, j, py, newIndex = 0, oldIndex;
+    var xScaled = new Uint16Array(w2);
+    var w1Scanline = w1 * COMPONENTS;
+
+    for (i = 0; i < w2; i++) {
+      xScaled[i] = Math.floor(i * xRatio) * COMPONENTS;
+    }
+    for (i = 0; i < h2; i++) {
+      py = Math.floor(i * yRatio) * w1Scanline;
+      for (j = 0; j < w2; j++) {
+        oldIndex = py + xScaled[j];
+        dest[newIndex++] = src[oldIndex++];
+        dest[newIndex++] = src[oldIndex++];
+        dest[newIndex++] = src[oldIndex++];
+        newIndex += alpha01;
+      }
+    }
+  }
+
   // Constructor should define this.numComps, this.defaultColor, this.name
   function ColorSpace() {
     error('should not call ColorSpace constructor');
@@ -170,8 +201,8 @@ var ColorSpace = (function ColorSpaceClosure() {
 
       if (rgbBuf) {
         if (needsResizing) {
-          PDFImage.resize(rgbBuf, bpc, 3, originalWidth, originalHeight, width,
-                          height, dest, alpha01);
+          resizeRgbImage(rgbBuf, bpc, originalWidth, originalHeight,
+                         width, height, alpha01, dest);
         } else {
           rgbPos = 0;
           destPos = 0;
@@ -263,13 +294,8 @@ var ColorSpace = (function ColorSpaceClosure() {
     }
 
     cs = xref.fetchIfRef(cs);
-    var mode;
-
     if (isName(cs)) {
-      mode = cs.name;
-      this.mode = mode;
-
-      switch (mode) {
+      switch (cs.name) {
         case 'DeviceGray':
         case 'G':
           return 'DeviceGrayCS';
@@ -282,11 +308,10 @@ var ColorSpace = (function ColorSpaceClosure() {
         case 'Pattern':
           return ['PatternCS', null];
         default:
-          error('unrecognized colorspace ' + mode);
+          error('unrecognized colorspace ' + cs.name);
       }
     } else if (isArray(cs)) {
-      mode = xref.fetchIfRef(cs[0]).name;
-      this.mode = mode;
+      var mode = xref.fetchIfRef(cs[0]).name;
       var numComps, params, alt, whitePoint, blackPoint, gamma;
 
       switch (mode) {
@@ -301,16 +326,16 @@ var ColorSpace = (function ColorSpaceClosure() {
           return 'DeviceCmykCS';
         case 'CalGray':
           params = xref.fetchIfRef(cs[1]);
-          whitePoint = params.get('WhitePoint');
-          blackPoint = params.get('BlackPoint');
+          whitePoint = params.getArray('WhitePoint');
+          blackPoint = params.getArray('BlackPoint');
           gamma = params.get('Gamma');
           return ['CalGrayCS', whitePoint, blackPoint, gamma];
         case 'CalRGB':
           params = xref.fetchIfRef(cs[1]);
-          whitePoint = params.get('WhitePoint');
-          blackPoint = params.get('BlackPoint');
-          gamma = params.get('Gamma');
-          var matrix = params.get('Matrix');
+          whitePoint = params.getArray('WhitePoint');
+          blackPoint = params.getArray('BlackPoint');
+          gamma = params.getArray('Gamma');
+          var matrix = params.getArray('Matrix');
           return ['CalRGBCS', whitePoint, blackPoint, gamma, matrix];
         case 'ICCBased':
           var stream = xref.fetchIfRef(cs[1]);
@@ -353,20 +378,15 @@ var ColorSpace = (function ColorSpaceClosure() {
         case 'Separation':
         case 'DeviceN':
           var name = xref.fetchIfRef(cs[1]);
-          numComps = 1;
-          if (isName(name)) {
-            numComps = 1;
-          } else if (isArray(name)) {
-            numComps = name.length;
-          }
+          numComps = isArray(name) ? name.length : 1;
           alt = ColorSpace.parseToIR(cs[2], xref, res);
           var tintFnIR = PDFFunction.getIR(xref, xref.fetchIfRef(cs[3]));
           return ['AlternateCS', numComps, alt, tintFnIR];
         case 'Lab':
           params = xref.fetchIfRef(cs[1]);
-          whitePoint = params.get('WhitePoint');
-          blackPoint = params.get('BlackPoint');
-          var range = params.get('Range');
+          whitePoint = params.getArray('WhitePoint');
+          blackPoint = params.getArray('BlackPoint');
+          var range = params.getArray('Range');
           return ['LabCS', whitePoint, blackPoint, range];
         default:
           error('unimplemented color space object "' + mode + '"');
@@ -461,26 +481,22 @@ var AlternateCS = (function AlternateCSClosure() {
       var scaled = new Float32Array(numComps);
       var tinted = new Float32Array(baseNumComps);
       var i, j;
-      if (usesZeroToOneRange) {
-        for (i = 0; i < count; i++) {
-          for (j = 0; j < numComps; j++) {
-            scaled[j] = src[srcOffset++] * scale;
-          }
-          tintFn(scaled, 0, tinted, 0);
+
+      for (i = 0; i < count; i++) {
+        for (j = 0; j < numComps; j++) {
+          scaled[j] = src[srcOffset++] * scale;
+        }
+        tintFn(scaled, 0, tinted, 0);
+        if (usesZeroToOneRange) {
           for (j = 0; j < baseNumComps; j++) {
             baseBuf[pos++] = tinted[j] * 255;
           }
-        }
-      } else {
-        for (i = 0; i < count; i++) {
-          for (j = 0; j < numComps; j++) {
-            scaled[j] = src[srcOffset++] * scale;
-          }
-          tintFn(scaled, 0, tinted, 0);
+        } else {
           base.getRgbItem(tinted, 0, baseBuf, pos);
           pos += baseNumComps;
         }
       }
+
       if (!isPassthrough) {
         base.getRgbBuffer(baseBuf, 0, count, dest, destOffset, 8, alpha01);
       }
@@ -516,29 +532,27 @@ var IndexedCS = (function IndexedCSClosure() {
   function IndexedCS(base, highVal, lookup) {
     this.name = 'Indexed';
     this.numComps = 1;
-    this.defaultColor = new Uint8Array([0]);
+    this.defaultColor = new Uint8Array(this.numComps);
     this.base = base;
     this.highVal = highVal;
 
     var baseNumComps = base.numComps;
     var length = baseNumComps * highVal;
-    var lookupArray;
 
     if (isStream(lookup)) {
-      lookupArray = new Uint8Array(length);
+      this.lookup = new Uint8Array(length);
       var bytes = lookup.getBytes(length);
-      lookupArray.set(bytes);
+      this.lookup.set(bytes);
     } else if (isString(lookup)) {
-      lookupArray = new Uint8Array(length);
+      this.lookup = new Uint8Array(length);
       for (var i = 0; i < length; ++i) {
-        lookupArray[i] = lookup.charCodeAt(i);
+        this.lookup[i] = lookup.charCodeAt(i);
       }
     } else if (lookup instanceof Uint8Array || lookup instanceof Array) {
-      lookupArray = lookup;
+      this.lookup = lookup;
     } else {
       error('Unrecognized lookup table: ' + lookup);
     }
-    this.lookup = lookupArray;
   }
 
   IndexedCS.prototype = {
@@ -582,7 +596,7 @@ var DeviceGrayCS = (function DeviceGrayCSClosure() {
   function DeviceGrayCS() {
     this.name = 'DeviceGray';
     this.numComps = 1;
-    this.defaultColor = new Float32Array([0]);
+    this.defaultColor = new Float32Array(this.numComps);
   }
 
   DeviceGrayCS.prototype = {
@@ -624,7 +638,7 @@ var DeviceRgbCS = (function DeviceRgbCSClosure() {
   function DeviceRgbCS() {
     this.name = 'DeviceRGB';
     this.numComps = 3;
-    this.defaultColor = new Float32Array([0, 0, 0]);
+    this.defaultColor = new Float32Array(this.numComps);
   }
   DeviceRgbCS.prototype = {
     getRgb: ColorSpace.prototype.getRgb,
@@ -717,7 +731,9 @@ var DeviceCmykCS = (function DeviceCmykCSClosure() {
   function DeviceCmykCS() {
     this.name = 'DeviceCMYK';
     this.numComps = 4;
-    this.defaultColor = new Float32Array([0, 0, 0, 1]);
+    this.defaultColor = new Float32Array(this.numComps);
+    // Set the fourth component to the maximum value for a black color.
+    this.defaultColor[3] = 1;
   }
   DeviceCmykCS.prototype = {
     getRgb: ColorSpace.prototype.getRgb,
@@ -757,7 +773,7 @@ var CalGrayCS = (function CalGrayCSClosure() {
   function CalGrayCS(whitePoint, blackPoint, gamma) {
     this.name = 'CalGray';
     this.numComps = 1;
-    this.defaultColor = new Float32Array([0]);
+    this.defaultColor = new Float32Array(this.numComps);
 
     if (!whitePoint) {
       error('WhitePoint missing - required for color space CalGray');
@@ -880,7 +896,7 @@ var CalRGBCS = (function CalRGBCSClosure() {
   function CalRGBCS(whitePoint, blackPoint, gamma, matrix) {
     this.name = 'CalRGB';
     this.numComps = 3;
-    this.defaultColor = new Float32Array(3);
+    this.defaultColor = new Float32Array(this.numComps);
 
     if (!whitePoint) {
       error('WhitePoint missing - required for color space CalRGB');
@@ -946,15 +962,15 @@ var CalRGBCS = (function CalRGBCSClosure() {
   }
 
   function matrixProduct(a, b, result) {
-      result[0] = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-      result[1] = a[3] * b[0] + a[4] * b[1] + a[5] * b[2];
-      result[2] = a[6] * b[0] + a[7] * b[1] + a[8] * b[2];
+    result[0] = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    result[1] = a[3] * b[0] + a[4] * b[1] + a[5] * b[2];
+    result[2] = a[6] * b[0] + a[7] * b[1] + a[8] * b[2];
   }
 
   function convertToFlat(sourceWhitePoint, LMS, result) {
-      result[0] = LMS[0] * 1 / sourceWhitePoint[0];
-      result[1] = LMS[1] * 1 / sourceWhitePoint[1];
-      result[2] = LMS[2] * 1 / sourceWhitePoint[2];
+    result[0] = LMS[0] * 1 / sourceWhitePoint[0];
+    result[1] = LMS[1] * 1 / sourceWhitePoint[1];
+    result[2] = LMS[2] * 1 / sourceWhitePoint[2];
   }
 
   function convertToD65(sourceWhitePoint, LMS, result) {
@@ -969,7 +985,7 @@ var CalRGBCS = (function CalRGBCSClosure() {
 
   function sRGBTransferFunction(color) {
     // See http://en.wikipedia.org/wiki/SRGB.
-    if (color <= 0.0031308){
+    if (color <= 0.0031308) {
       return adjustToRange(0, 1, 12.92 * color);
     }
 
@@ -1156,7 +1172,7 @@ var LabCS = (function LabCSClosure() {
   function LabCS(whitePoint, blackPoint, range) {
     this.name = 'Lab';
     this.numComps = 3;
-    this.defaultColor = new Float32Array([0, 0, 0]);
+    this.defaultColor = new Float32Array(this.numComps);
 
     if (!whitePoint) {
       error('WhitePoint missing - required for color space Lab');
@@ -1291,15 +1307,5 @@ var LabCS = (function LabCSClosure() {
   return LabCS;
 })();
 
-// TODO refactor to remove dependency on image.js
-function _setCoreImage(coreImage_) {
-  coreImage = coreImage_;
-  PDFImage = coreImage_.PDFImage;
-}
-exports._setCoreImage = _setCoreImage;
-
 exports.ColorSpace = ColorSpace;
-
-// TODO refactor to remove dependency on colorspace.js
-coreStream._setCoreColorSpace(exports);
 }));

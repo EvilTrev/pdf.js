@@ -64,7 +64,8 @@ var rasterizeTextLayer = (function rasterizeTextLayerClosure() {
     return textLayerStylePromise;
   }
 
-  function rasterizeTextLayer(ctx, viewport, textContent) {
+  function rasterizeTextLayer(ctx, viewport, textContent,
+                              enhanceTextSelection) {
     return new Promise(function (resolve) {
       // Building SVG with size of the viewport.
       var svg = document.createElementNS(SVG_NS, 'svg:svg');
@@ -90,9 +91,11 @@ var rasterizeTextLayer = (function rasterizeTextLayerClosure() {
       var task = PDFJS.renderTextLayer({
         textContent: textContent,
         container: div,
-        viewport: viewport
+        viewport: viewport,
+        enhanceTextSelection: enhanceTextSelection,
       });
       Promise.all([stylePromise, task.promise]).then(function (results) {
+        task.expandTextDivs(true);
         style.textContent = results[0];
         svg.appendChild(foreignObject);
 
@@ -158,7 +161,8 @@ var rasterizeAnnotationLayer = (function rasterizeAnnotationLayerClosure() {
     return imagePromises;
   }
 
-  function rasterizeAnnotationLayer(ctx, viewport, annotations, page) {
+  function rasterizeAnnotationLayer(ctx, viewport, annotations, page,
+                                    renderInteractiveForms) {
     return new Promise(function (resolve) {
       // Building SVG with size of the viewport.
       var svg = document.createElementNS(SVG_NS, 'svg:svg');
@@ -187,7 +191,8 @@ var rasterizeAnnotationLayer = (function rasterizeAnnotationLayerClosure() {
           div: div,
           annotations: annotations,
           page: page,
-          linkService: new LinkServiceMock()
+          linkService: new LinkServiceMock(),
+          renderInteractiveForms: renderInteractiveForms,
         };
         PDFJS.AnnotationLayer.render(parameters);
 
@@ -281,7 +286,10 @@ var Driver = (function DriverClosure() {
 
     run: function Driver_run() {
       var self = this;
-
+      window.onerror = function(message, source, line, column, error) {
+        self._info('Error: ' + message + ' Script: ' + source + ' Line: ' +
+                  line + ' Column: ' + column + ' StackTrace: ' +  error);
+      };
       this._info('User agent: ' + navigator.userAgent);
       this._log('Harness thinks this browser is "' + this.browser +
         '" with path "' + this.appPath + '"\n');
@@ -329,9 +337,7 @@ var Driver = (function DriverClosure() {
 
       this._log('Loading file "' + task.file + '"\n');
 
-      var absoluteUrl = pdfjsSharedUtil.combineUrl(window.location.href,
-                                                   task.file);
-
+      var absoluteUrl = new URL(task.file, window.location).href;
       PDFJS.disableRange = task.disableRange;
       PDFJS.disableAutoFetch = !task.enableAutoFetch;
       try {
@@ -453,6 +459,9 @@ var Driver = (function DriverClosure() {
             self.canvas.height = viewport.height;
             self._clearCanvas();
 
+            // Initialize various `eq` test subtypes, see comment below.
+            var renderAnnotations = false, renderForms = false;
+
             var textLayerCanvas, annotationLayerCanvas;
             var initPromise;
             if (task.type === 'text') {
@@ -467,18 +476,23 @@ var Driver = (function DriverClosure() {
               var textLayerContext = textLayerCanvas.getContext('2d');
               textLayerContext.clearRect(0, 0,
                 textLayerCanvas.width, textLayerCanvas.height);
+              var enhanceText = !!task.enhance;
               // The text builder will draw its content on the test canvas
-              initPromise =
-                page.getTextContent({ normalizeWhitespace: true }).then(
-                  function(textContent) {
-                    return rasterizeTextLayer(textLayerContext, viewport,
-                                              textContent);
-                });
+              initPromise = page.getTextContent({
+                normalizeWhitespace: true,
+              }).then(function(textContent) {
+                return rasterizeTextLayer(textLayerContext, viewport,
+                                          textContent, enhanceText);
+              });
             } else {
               textLayerCanvas = null;
+              // We fetch the `eq` specific test subtypes here, to avoid
+              // accidentally changing the behaviour for other types of tests.
+              renderAnnotations = !!task.annotations;
+              renderForms = !!task.forms;
 
               // Render the annotation layer if necessary.
-              if (task.annotations) {
+              if (renderAnnotations || renderForms) {
                 // Create a dummy canvas for the drawing operations.
                 annotationLayerCanvas = self.annotationLayerCanvas;
                 if (!annotationLayerCanvas) {
@@ -498,7 +512,7 @@ var Driver = (function DriverClosure() {
                     function(annotations) {
                       return rasterizeAnnotationLayer(annotationLayerContext,
                                                       viewport, annotations,
-                                                      page);
+                                                      page, renderForms);
                   });
               } else {
                 annotationLayerCanvas = null;
@@ -508,7 +522,8 @@ var Driver = (function DriverClosure() {
 
             var renderContext = {
               canvasContext: ctx,
-              viewport: viewport
+              viewport: viewport,
+              renderInteractiveForms: renderForms,
             };
             var completeRender = (function(error) {
               // if text layer is present, compose it on top of the page

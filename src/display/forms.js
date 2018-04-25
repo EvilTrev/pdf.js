@@ -8,14 +8,13 @@
     factory(exports, require('../shared/util.js'),
       require('../shared/global.js'));
   } else {
-    factory((root.pdfjsDisplayFormFunctionality = {}), root.pdfjsSharedUtil,
+    factory((root.pdfjsDisplayForms = {}), root.pdfjsSharedUtil,
       root.pdfjsSharedGlobal);
   }
 }(this, function (exports, sharedUtil, sharedGlobal) {
 
 var Util = sharedUtil.Util; // @IAG Replace PDFJS.Util calls with this
 var createPromiseCapability = sharedUtil.createPromiseCapability; // Maybe implement promises later
-var PDFJS = sharedGlobal.PDFJS;
 
 var FormFunctionality = (function FormFunctionalityClosure() {
 
@@ -26,6 +25,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 
     var genericClosureOverrides = {}; // closures that render the controls. Can be used to render all DROP_DOWNS one way, for example
     var idClosureOverrides = {}; // closure that overrides any controls id (specifically the correctedId). For radio buttons, all that are part of one group will go to same closure. Grouping ID is not respected
+    var idValueGetOverrides = {}; // closure that overrides getting data
 	var postCreationTweak = false;
 
     var formFields = {};
@@ -48,13 +48,13 @@ var FormFunctionality = (function FormFunctionalityClosure() {
         if (closure.length!=2) {
             throw 'Passed function must accept two arguments: itemProperties and viewport';
         }
-        var args = closure.toString ().match (/^\s*function\s+(?:\w*\s*)?\((.*?)\)/);
-        args = args ? (args[1] ? args[1].trim ().split (/\s*,\s*/) : []) : null;
-        if (args[0]!='itemProperties' || args[1]!='viewport') {
-            throw 'Passed function must accept two arguments: itemProperties and viewport';
-        }
+        //var args = closure.toString ().match (/^\s*function\s+(?:\w*\s*)?\((.*?)\)/);
+        //args = args ? (args[1] ? args[1].trim ().split (/\s*,\s*/) : []) : null;
+        //if (args[0]!='itemProperties' || args[1]!='viewport') {
+        //    throw 'Passed function must accept two arguments: itemProperties and viewport';
+        //}
     }
-						 
+
 	function assertValidControlTweak(closure) {
 		if (typeof(closure)!='function') {
 			throw "Passed item is not a function";
@@ -62,12 +62,26 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 		if (closure.length!=3) {
 			throw 'Passed function must accept three arguments: fieldType, elementId and element';
 		}
-		var args = closure.toString ().match (/^\s*function\s+(?:\w*\s*)?\((.*?)\)/);
-		args = args ? (args[1] ? args[1].trim ().split (/\s*,\s*/) : []) : null;
-		if (args[0]!='fieldType' || args[1]!='elementId' || args[2]!='element') {
-			throw 'Passed function must accept three arguments: fieldType, elementId and element';
-		}
+		//var args = closure.toString ().match (/^\s*function\s+(?:\w*\s*)?\((.*?)\)/);
+		//args = args ? (args[1] ? args[1].trim ().split (/\s*,\s*/) : []) : null;
+		//if (args[0]!='fieldType' || args[1]!='elementId' || args[2]!='element') {
+		//	throw 'Passed function must accept three arguments: fieldType, elementId and element';
+		//}
 	}
+
+    function assertValidIdValueClosure(closure) {
+        if (typeof closure != 'function') {
+            throw "Passed item is not a function";
+        }
+        if (closure.length != 1) {
+            throw 'Passed function must accept one arguments: element';
+        }
+        //var args = closure.toString().match(/^\s*function\s+(?:\w*\s*)?\((.*?)\)/);
+        //args = args ? args[1] ? args[1].trim().split(/\s*,\s*/) : [] : null;
+        //if (args[0] != 'fieldType' || args[1] != 'elementId' || args[2] != 'element') {
+        // throw 'Passed function must accept three arguments: fieldType, elementId and element';
+        //}
+    }
 
     function _isSelectMultiple(element) {
         for (var i=0, l = element.attributes.length; i<l; i++) {
@@ -162,6 +176,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
         };
         if (item.fullName.indexOf('.`')!=-1) {
             prop.correctedId = item.fullName.substring(0,item.fullName.indexOf('.`'));
+            prop.groupingId = item.fullName.substring(item.fullName.indexOf('.`')+2);
             prop.isGroupMember = true;
         }
         else {
@@ -204,7 +219,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 
     function _getDisplayFieldProperties(item, viewport) {
         var fieldRect = viewport.convertToViewportRectangle(item.rect);
-        var rect = PDFJS.Util.normalizeRect(fieldRect);
+        var rect = Util.normalizeRect(fieldRect);
         return {
             x: Math.floor(rect[0]),
             y: Math.floor(rect[1]),
@@ -336,6 +351,8 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 		var control = document.createElement('input');
 		control.type = 'checkbox';
 		control.value = itemProperties.options[1];		// Checkboxes are often Off/Yes, however this is a custom field controlled by export_value
+        control.id = itemProperties.id;
+        control.name = itemProperties.id;
 		control.style.padding = '0';
 		control.style.margin = '0';
 		control.style.marginLeft = itemProperties.width/2-Math.ceil(4*viewport.scale)+'px';
@@ -350,6 +367,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 		var control = document.createElement('input');
 		control.type = 'radio';
 		control.value = itemProperties.options[1];		// Radio buttons have an Off/Yes style value, however Yes is usually a unique ID unless grouping is turned on
+        control.id = itemProperties.correctedId+'.'+itemProperties.groupingId;
 		control.name = itemProperties.correctedId;		// Name is used to group radio buttons
 		control.style.padding = '0';
 		control.style.margin = '0';
@@ -415,6 +433,8 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 			control.style.cursor = "not-allowed";
 		}
 		control.value = itemProperties.value;
+        control.id = itemProperties.id;
+        control.name = itemProperties.id;
 		return control;
 	};
 
@@ -425,6 +445,8 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 		control.style.width = Math.floor(itemProperties.width-3) + 'px'; // small amount + borders
 		control.style.height = Math.floor(itemProperties.height) + 'px'; // small amount + borders
 		control.style.textAlign = itemProperties.textAlignment;
+        control.id = itemProperties.id;
+        control.name = itemProperties.id;
 		if (Math.floor(itemProperties.fontSizeControl)>=Math.floor(itemProperties.height-2)) {
 			control.style.fontSize = Math.floor(itemProperties.height-3) + 'px';
 		}
@@ -526,10 +548,10 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 
 					// If we created a control, add it to a position container, and then the domain
 					if (control) {
-						
+
 						// Do we want to perform any tweaks?
 						if (postCreationTweak) postCreationTweak(fieldType,fieldData.correctedId,control);
-						  
+
 						var container = getPositionContainer(fieldData, viewport);
 						container.appendChild(control);
 						fieldType = determineControlType(control);
@@ -559,6 +581,10 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 
         clearControlRendersByType: function() {
             genericClosureOverrides = {};
+        },
+
+        clearIdValueOverride: function () {
+            idValueGetOverrides = {};
         },
 
         setPostRenderHook: function(hook) {
@@ -601,7 +627,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
                 idClosureOverrides[id]=closure;
             }
         },
-						 
+
 		/**
 		 * Provide a function that will be given a chance to tweak a control after it is created (custom css, angular controls etc could be added here)
 		 * @param {function} postCallback A function with parameters 'filedType', 'elementId' and 'element' that will have chance to customize the field and return nothing
@@ -612,10 +638,27 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 		},
 
         /**
+         * A function that will allow overriding of getting values from form. Useful when fully overriding element rendering
+         * from one type to another (checkbox to say drop down)
+         * @param {function} closure A function with parameters 'element' that will return the value of the dom form element
+         * @param {string} id The id of the form element we wish to render in the closure
+         */
+        setIdValueOverride: function(closure, id) {
+            if (!closure) {
+                try {
+                    delete idValueGetOverrides[id];
+                } catch (e) {}
+            } else {
+                assertValidIdValueClosure(closure);
+                idValueGetOverrides[id] = closure;
+            }
+        },
+
+        /**
          * @return {array} An array of values of the form elements in format [elementId]=value
          */
         getFormValues: function() {
-						 
+
 			// Process to visit each element in a set of them
 			var values = {};
 			var visitElements = function(set, action) {
@@ -625,39 +668,59 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 					if (element) action(elementId,element);
 				});
 			};
-			
+
 			// Visit each checkbox
 			visitElements(formFields[fieldTypes.CHECK_BOX],function(elementId,element) {
-				values[elementId] = element.checked ? true : false;
+                if (typeof(idValueGetOverrides[elementId])!='undefined') {
+                    values[elementId]=idValueGetOverrides[elementId](element);
+                }
+                else {
+                    values[elementId] = element.checked ? true : false;
+                }
 			});
 
 			// Visit each text field
 			visitElements(formFields[fieldTypes.TEXT],function(elementId,element) {
-				values[elementId] = element.value;
+                if (typeof(idValueGetOverrides[elementId])!='undefined') {
+                    values[elementId]=idValueGetOverrides[elementId](element);
+                }
+                else {
+                    values[elementId] = element.value;
+                }
 			});
 
 			// Visit each text drop down
 			visitElements(formFields[fieldTypes.DROP_DOWN],function(elementId,element) {
-				if (_isSelectMultiple(element)) {
-					var valueObject = {};
-					for (var i=0; i<element.length; i++) {
-						if (element[i].selected) {
-							valueObject[element[i].value] = element[i].value;
-						}
-					}
-					values[elementId] = valueObject;
-				}
-				else {
-					values[elementId] = element.options[element.selectedIndex].value;
-				}
+                if (typeof(idValueGetOverrides[elementId])!='undefined') {
+                    values[elementId]=idValueGetOverrides[elementId](element);
+                }
+                else {
+                    if (_isSelectMultiple(element)) {
+                        var valueObject = {};
+                        for (var i = 0; i < element.length; i++) {
+                            if (element[i].selected) {
+                                valueObject[element[i].value] = element[i].value;
+                            }
+                        }
+                        values[elementId] = valueObject;
+                    } else {
+                        values[elementId] = element.options[element.selectedIndex].value;
+                    }
+                }
 			});
 
 			// Visit each radio button
 			visitElements(formFields[fieldTypes.RADIO_BUTTON],function(elementId,element) {
-				element.some(function(r){
-					if (r.checked) values[elementId] = r.value;
-					return r.checked;
-				});
+                if (typeof(idValueGetOverrides[elementId])!='undefined') {
+                    values[elementId]=idValueGetOverrides[elementId](element);
+                }
+                else {
+                    element.some(function (r) {
+                        if (r.checked)
+                            values[elementId] = r.value;
+                        return r.checked;
+                    });
+                }
 			});
 
 			// Done!
@@ -706,7 +769,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
             pageHolder.appendChild(canvas);
             canvas.height = viewport.height;
             canvas.width = viewport.width;
-						 
+
 			// Tweak canvas to support hi-dpi rendering (without affecting the form fields positioning)
 			var context = canvas.getContext('2d');
 			var devicePixelRatio = window.devicePixelRatio || 1;
@@ -721,7 +784,7 @@ var FormFunctionality = (function FormFunctionalityClosure() {
 			canvas.width = canvas.width * ratio;
 			canvas.height = canvas.height * ratio;
 			if (postCreationTweak) postCreationTweak("CANVAS","canvas",canvas);
-						 
+
             //
             // Render PDF page into canvas context
             //
@@ -761,8 +824,6 @@ var FormFunctionality = (function FormFunctionalityClosure() {
         }
     }
 })();
-
-PDFJS.FormFunctionality = FormFunctionality;
 
 exports.FormFunctionality = FormFunctionality;
 }));

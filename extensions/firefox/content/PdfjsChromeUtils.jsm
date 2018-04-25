@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 /* jshint esnext:true */
-/* globals Components, Services, XPCOMUtils, DEFAULT_PREFERENCES */
+/* globals Components, Services, XPCOMUtils */
 
 'use strict';
 
@@ -35,7 +35,11 @@ XPCOMUtils.defineLazyServiceGetter(Svc, 'mime',
                                    '@mozilla.org/mime;1',
                                    'nsIMIMEService');
 
-//#include ../../../web/default_preferences.js
+var DEFAULT_PREFERENCES =
+//#include ../../../web/default_preferences.json
+//#if false
+  'end of DEFAULT_PREFERENCES';
+//#endif
 
 var PdfjsChromeUtils = {
   // For security purposes when running remote, we restrict preferences
@@ -49,7 +53,7 @@ var PdfjsChromeUtils = {
    */
 
   init: function () {
-    this._browsers = new Set();
+    this._browsers = new WeakSet();
     if (!this._ppmm) {
       // global parent process message manager (PPMM)
       this._ppmm = Cc['@mozilla.org/parentprocessmessagemanager;1'].
@@ -166,18 +170,7 @@ var PdfjsChromeUtils = {
   _findbarFromMessage: function(aMsg) {
     let browser = aMsg.target;
     let tabbrowser = browser.getTabBrowser();
-    let tab;
-//#if MOZCENTRAL
-    tab = tabbrowser.getTabForBrowser(browser);
-//#else
-    if (tabbrowser.getTabForBrowser) {
-      tab = tabbrowser.getTabForBrowser(browser);
-    } else {
-      // _getTabForBrowser is deprecated in Firefox 35, see
-      // https://bugzilla.mozilla.org/show_bug.cgi?id=1039500.
-      tab = tabbrowser._getTabForBrowser(browser);
-    }
-//#endif
+    let tab = tabbrowser.getTabForBrowser(browser);
     return tabbrowser.getFindBar(tab);
   },
 
